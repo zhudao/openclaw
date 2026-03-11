@@ -4,10 +4,17 @@ import { kickFollowupDrainIfIdle } from "./drain.js";
 import { getExistingFollowupQueue, getFollowupQueue } from "./state.js";
 import type { FollowupRun, QueueDedupeMode, QueueSettings } from "./types.js";
 
-const RECENT_QUEUE_MESSAGE_IDS = createDedupeCache({
+/**
+ * Keep queued message-id dedupe shared across bundled chunks so redeliveries
+ * are rejected no matter which chunk receives the enqueue call.
+ */
+const _g = globalThis as typeof globalThis & {
+  __openclaw_recent_queue_message_ids__?: ReturnType<typeof createDedupeCache>;
+};
+const RECENT_QUEUE_MESSAGE_IDS = (_g.__openclaw_recent_queue_message_ids__ ??= createDedupeCache({
   ttlMs: 5 * 60 * 1000,
   maxSize: 10_000,
-});
+}));
 
 function buildRecentMessageIdKey(run: FollowupRun, queueKey: string): string | undefined {
   const messageId = run.messageId?.trim();
