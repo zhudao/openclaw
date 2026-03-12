@@ -7,6 +7,7 @@ import {
   normalizeAccountId,
   promptAccountId,
   promptChannelAccessConfig,
+  requiresExplicitMatrixDefaultAccount,
   type RuntimeEnv,
   type ChannelOnboardingAdapter,
   type ChannelOnboardingDmPolicy,
@@ -492,12 +493,21 @@ async function runMatrixConfigure(params: {
 export const matrixOnboardingAdapter: ChannelOnboardingAdapter = {
   channel,
   getStatus: async ({ cfg, accountOverrides }) => {
+    const resolvedCfg = cfg as CoreConfig;
+    const sdkReady = isMatrixSdkAvailable();
+    if (!accountOverrides[channel] && requiresExplicitMatrixDefaultAccount(resolvedCfg)) {
+      return {
+        channel,
+        configured: false,
+        statusLines: ['Matrix: set "channels.matrix.defaultAccount" to select a named account'],
+        selectionHint: !sdkReady ? "install matrix-js-sdk" : "set defaultAccount",
+      };
+    }
     const account = resolveMatrixAccount({
-      cfg: cfg as CoreConfig,
-      accountId: resolveMatrixOnboardingAccountId(cfg as CoreConfig, accountOverrides[channel]),
+      cfg: resolvedCfg,
+      accountId: resolveMatrixOnboardingAccountId(resolvedCfg, accountOverrides[channel]),
     });
     const configured = account.configured;
-    const sdkReady = isMatrixSdkAvailable();
     return {
       channel,
       configured,

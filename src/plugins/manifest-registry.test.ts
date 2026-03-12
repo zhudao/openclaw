@@ -3,8 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { withEnvAsync } from "../test-utils/env.js";
 import type { PluginCandidate } from "./discovery.js";
-import { loadPluginManifestRegistry } from "./manifest-registry.js";
+import {
+  clearPluginManifestRegistryCache,
+  loadPluginManifestRegistry,
+} from "./manifest-registry.js";
 
 const tempDirs: string[] = [];
 
@@ -116,6 +120,7 @@ function expectUnsafeWorkspaceManifestRejected(params: {
 }
 
 afterEach(() => {
+  clearPluginManifestRegistryCache();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (!dir) {
@@ -263,5 +268,40 @@ describe("loadPluginManifestRegistry", () => {
     });
     expect(registry.plugins.some((entry) => entry.id === "bundled-hardlink")).toBe(true);
     expect(hasUnsafeManifestDiagnostic(registry)).toBe(false);
+  });
+
+  it("does not reuse cached bundled plugin roots across env changes", async () => {
+    const bundledA = makeTempDir();
+    const bundledB = makeTempDir();
+    const matrixA = path.join(bundledA, "matrix");
+    const matrixB = path.join(bundledB, "matrix");
+    fs.mkdirSync(matrixA, { recursive: true });
+    fs.mkdirSync(matrixB, { recursive: true });
+    writeManifest(matrixA, {
+      id: "matrix",
+      name: "Matrix A",
+      configSchema: { type: "object" },
+    });
+    writeManifest(matrixB, {
+      id: "matrix",
+      name: "Matrix B",
+      configSchema: { type: "object" },
+    });
+    fs.writeFileSync(path.join(matrixA, "index.ts"), "export default {}", "utf-8");
+    fs.writeFileSync(path.join(matrixB, "index.ts"), "export default {}", "utf-8");
+
+    const first = await withEnvAsync({ OPENCLAW_BUNDLED_PLUGINS_DIR: bundledA }, async () =>
+      loadPluginManifestRegistry({ cache: true }),
+    );
+    const second = await withEnvAsync({ OPENCLAW_BUNDLED_PLUGINS_DIR: bundledB }, async () =>
+      loadPluginManifestRegistry({ cache: true }),
+    );
+
+    expect(
+      fs.realpathSync(first.plugins.find((plugin) => plugin.id === "matrix")?.rootDir ?? ""),
+    ).toBe(fs.realpathSync(matrixA));
+    expect(
+      fs.realpathSync(second.plugins.find((plugin) => plugin.id === "matrix")?.rootDir ?? ""),
+    ).toBe(fs.realpathSync(matrixB));
   });
 });

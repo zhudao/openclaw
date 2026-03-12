@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { withTempHome } from "../../test/helpers/temp-home.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { autoPrepareLegacyMatrixCrypto, detectLegacyMatrixCrypto } from "./matrix-legacy-crypto.js";
+import { MATRIX_LEGACY_CRYPTO_INSPECTOR_UNAVAILABLE_MESSAGE } from "./matrix-plugin-helper.js";
 import { resolveMatrixAccountStorageRoot } from "./matrix-storage-paths.js";
 
 function writeFile(filePath: string, value: string) {
@@ -317,5 +318,44 @@ describe("matrix legacy encrypted-state migration", () => {
         `Legacy Matrix encrypted state path exists but is not a directory: ${path.join(stateDir, "matrix", "crypto")}. OpenClaw skipped automatic crypto migration for that path.`,
       );
     });
+  });
+
+  it("reports a missing matrix plugin helper once when encrypted-state migration cannot run", async () => {
+    await withTempHome(
+      async (home) => {
+        const stateDir = path.join(home, ".openclaw");
+        writeFile(
+          path.join(stateDir, "matrix", "crypto", "bot-sdk.json"),
+          '{"deviceId":"DEVICE123"}',
+        );
+
+        const cfg: OpenClawConfig = {
+          channels: {
+            matrix: {
+              homeserver: "https://matrix.example.org",
+              userId: "@bot:example.org",
+              accessToken: "tok-123",
+            },
+          },
+        };
+
+        const result = await autoPrepareLegacyMatrixCrypto({
+          cfg,
+          env: process.env,
+        });
+
+        expect(result.migrated).toBe(false);
+        expect(
+          result.warnings.filter(
+            (warning) => warning === MATRIX_LEGACY_CRYPTO_INSPECTOR_UNAVAILABLE_MESSAGE,
+          ),
+        ).toHaveLength(1);
+      },
+      {
+        env: {
+          OPENCLAW_BUNDLED_PLUGINS_DIR: (home) => path.join(home, "empty-bundled"),
+        },
+      },
+    );
   });
 });

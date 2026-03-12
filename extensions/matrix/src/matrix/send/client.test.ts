@@ -29,17 +29,16 @@ vi.mock("../../runtime.js", () => ({
   getMatrixRuntime: () => getMatrixRuntimeMock(),
 }));
 
-let resolveMatrixClient: typeof import("./client.js").resolveMatrixClient;
 let withResolvedMatrixClient: typeof import("./client.js").withResolvedMatrixClient;
 
-describe("resolveMatrixClient", () => {
+describe("withResolvedMatrixClient", () => {
   beforeEach(async () => {
     vi.resetModules();
     primeMatrixClientResolverMocks({
       resolved: {},
     });
 
-    ({ resolveMatrixClient, withResolvedMatrixClient } = await import("./client.js"));
+    ({ withResolvedMatrixClient } = await import("./client.js"));
   });
 
   afterEach(() => {
@@ -49,7 +48,7 @@ describe("resolveMatrixClient", () => {
   it("creates a one-off client even when OPENCLAW_GATEWAY_PORT is set", async () => {
     vi.stubEnv("OPENCLAW_GATEWAY_PORT", "18799");
 
-    const result = await resolveMatrixClient({ accountId: "default" });
+    const result = await withResolvedMatrixClient({ accountId: "default" }, async () => "ok");
 
     expect(getActiveMatrixClientMock).toHaveBeenCalledWith("default");
     expect(resolveMatrixAuthMock).toHaveBeenCalledTimes(1);
@@ -61,18 +60,23 @@ describe("resolveMatrixClient", () => {
     );
     const oneOffClient = await createMatrixClientMock.mock.results[0]?.value;
     expect(oneOffClient.prepareForOneOff).toHaveBeenCalledTimes(1);
-    expect(result.stopOnDone).toBe(true);
+    expect(oneOffClient.stop).toHaveBeenCalledTimes(1);
+    expect(result).toBe("ok");
   });
 
   it("reuses active monitor client when available", async () => {
     const activeClient = createMockMatrixClient();
     getActiveMatrixClientMock.mockReturnValue(activeClient);
 
-    const result = await resolveMatrixClient({ accountId: "default" });
+    const result = await withResolvedMatrixClient({ accountId: "default" }, async (client) => {
+      expect(client).toBe(activeClient);
+      return "ok";
+    });
 
-    expect(result).toEqual({ client: activeClient, stopOnDone: false });
+    expect(result).toBe("ok");
     expect(resolveMatrixAuthMock).not.toHaveBeenCalled();
     expect(createMatrixClientMock).not.toHaveBeenCalled();
+    expect(activeClient.stop).not.toHaveBeenCalled();
   });
 
   it("uses the effective account id when auth resolution is implicit", async () => {
@@ -92,7 +96,7 @@ describe("resolveMatrixClient", () => {
       encryption: false,
     });
 
-    await resolveMatrixClient({});
+    await withResolvedMatrixClient({}, async () => {});
 
     expect(getActiveMatrixClientMock).toHaveBeenCalledWith("ops");
     expect(resolveMatrixAuthMock).toHaveBeenCalledWith({
@@ -115,10 +119,7 @@ describe("resolveMatrixClient", () => {
       },
     };
 
-    await resolveMatrixClient({
-      cfg: explicitCfg,
-      accountId: "ops",
-    });
+    await withResolvedMatrixClient({ cfg: explicitCfg, accountId: "ops" }, async () => {});
 
     expect(getMatrixRuntimeMock).not.toHaveBeenCalled();
     expect(resolveMatrixAuthContextMock).toHaveBeenCalledWith({
@@ -129,19 +130,6 @@ describe("resolveMatrixClient", () => {
       cfg: explicitCfg,
       accountId: "ops",
     });
-  });
-
-  it("stops one-off matrix clients after wrapped sends succeed", async () => {
-    const oneOffClient = createMockMatrixClient();
-    createMatrixClientMock.mockResolvedValue(oneOffClient);
-
-    const result = await withResolvedMatrixClient({ accountId: "default" }, async (client) => {
-      expect(client).toBe(oneOffClient);
-      return "ok";
-    });
-
-    expect(result).toBe("ok");
-    expect(oneOffClient.stop).toHaveBeenCalledTimes(1);
   });
 
   it("still stops one-off matrix clients when wrapped sends fail", async () => {

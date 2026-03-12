@@ -3,15 +3,13 @@ import {
   isPrivateOrLoopbackHost,
   normalizeAccountId,
   normalizeOptionalAccountId,
+  normalizeResolvedSecretInputString,
+  requiresExplicitMatrixDefaultAccount,
+  resolveMatrixDefaultOrOnlyAccountId,
 } from "openclaw/plugin-sdk/matrix";
 import { getMatrixRuntime } from "../../runtime.js";
-import { normalizeResolvedSecretInputString } from "../../secret-input.js";
 import type { CoreConfig } from "../../types.js";
-import {
-  findMatrixAccountConfig,
-  listNormalizedMatrixAccountIds,
-  resolveMatrixBaseConfig,
-} from "../account-config.js";
+import { findMatrixAccountConfig, resolveMatrixBaseConfig } from "../account-config.js";
 import { resolveMatrixConfigFieldPath } from "../config-update.js";
 import { MatrixClient } from "../sdk.js";
 import { ensureMatrixSdkLoggingConfigured } from "./logging.js";
@@ -315,39 +313,14 @@ export function resolveMatrixConfigForAccount(
   };
 }
 
-function hasMatrixAuthInputs(config: MatrixResolvedConfig): boolean {
-  return Boolean(config.homeserver && (config.accessToken || (config.userId && config.password)));
-}
-
 export function resolveImplicitMatrixAccountId(
   cfg: CoreConfig,
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  const accountIds = listNormalizedMatrixAccountIds(cfg);
-  const configuredDefault = normalizeOptionalAccountId(cfg.channels?.matrix?.defaultAccount);
-  if (configuredDefault && accountIds.includes(configuredDefault)) {
-    const resolved = resolveMatrixConfigForAccount(cfg, configuredDefault, env);
-    if (hasMatrixAuthInputs(resolved)) {
-      return configuredDefault;
-    }
-  }
-
-  if (accountIds.length === 0) {
+  if (requiresExplicitMatrixDefaultAccount(cfg)) {
     return null;
   }
-
-  const readyIds = accountIds.filter((accountId) =>
-    hasMatrixAuthInputs(resolveMatrixConfigForAccount(cfg, accountId, env)),
-  );
-  if (readyIds.length === 1) {
-    return readyIds[0] ?? null;
-  }
-
-  if (readyIds.includes(DEFAULT_ACCOUNT_ID)) {
-    return DEFAULT_ACCOUNT_ID;
-  }
-
-  return null;
+  return normalizeAccountId(resolveMatrixDefaultOrOnlyAccountId(cfg));
 }
 
 export function resolveMatrixAuthContext(params?: {
@@ -363,8 +336,12 @@ export function resolveMatrixAuthContext(params?: {
   const cfg = params?.cfg ?? (getMatrixRuntime().config.loadConfig() as CoreConfig);
   const env = params?.env ?? process.env;
   const explicitAccountId = normalizeOptionalAccountId(params?.accountId);
-  const effectiveAccountId =
-    explicitAccountId ?? resolveImplicitMatrixAccountId(cfg, env) ?? DEFAULT_ACCOUNT_ID;
+  const effectiveAccountId = explicitAccountId ?? resolveImplicitMatrixAccountId(cfg, env);
+  if (!effectiveAccountId) {
+    throw new Error(
+      'Multiple Matrix accounts are configured and channels.matrix.defaultAccount is not set. Set "channels.matrix.defaultAccount" to the intended account or pass --account <id>.',
+    );
+  }
   const resolved = resolveMatrixConfigForAccount(cfg, effectiveAccountId, env);
 
   return {

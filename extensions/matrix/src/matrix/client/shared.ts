@@ -175,15 +175,6 @@ export async function resolveSharedMatrixClient(
   }
 }
 
-export async function waitForMatrixSync(_params: {
-  client: MatrixClient;
-  timeoutMs?: number;
-  abortSignal?: AbortSignal;
-}): Promise<void> {
-  // matrix-js-sdk handles sync lifecycle in start() for this integration.
-  // This is kept for API compatibility but is essentially a no-op now
-}
-
 export function stopSharedClient(): void {
   for (const state of sharedClientStates.values()) {
     state.client.stop();

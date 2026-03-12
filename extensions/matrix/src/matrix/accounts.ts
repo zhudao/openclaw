@@ -1,9 +1,9 @@
 import {
   DEFAULT_ACCOUNT_ID,
+  hasConfiguredSecretInput,
   normalizeAccountId,
-  normalizeOptionalAccountId,
-} from "openclaw/plugin-sdk/account-id";
-import { hasConfiguredSecretInput } from "../secret-input.js";
+  resolveMatrixDefaultOrOnlyAccountId,
+} from "openclaw/plugin-sdk/matrix";
 import type { CoreConfig, MatrixConfig } from "../types.js";
 import {
   findMatrixAccountConfig,
@@ -49,15 +49,7 @@ export function listMatrixAccountIds(cfg: CoreConfig): string[] {
 }
 
 export function resolveDefaultMatrixAccountId(cfg: CoreConfig): string {
-  const configuredDefault = normalizeOptionalAccountId(cfg.channels?.matrix?.defaultAccount);
-  const ids = listMatrixAccountIds(cfg);
-  if (configuredDefault && ids.includes(configuredDefault)) {
-    return configuredDefault;
-  }
-  if (ids.includes(DEFAULT_ACCOUNT_ID)) {
-    return DEFAULT_ACCOUNT_ID;
-  }
-  return ids[0] ?? DEFAULT_ACCOUNT_ID;
+  return normalizeAccountId(resolveMatrixDefaultOrOnlyAccountId(cfg));
 }
 
 export function resolveMatrixAccount(params: {

@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withTempHome } from "../../test/helpers/temp-home.js";
+import { detectLegacyMatrixCrypto } from "./matrix-legacy-crypto.js";
+import { resolveMatrixAccountStorageRoot } from "./matrix-storage-paths.js";
 
 const createBackupArchiveMock = vi.hoisted(() => vi.fn());
 
@@ -194,5 +196,56 @@ describe("matrix migration snapshots", () => {
         }),
       ).toBe(true);
     });
+  });
+
+  it("treats legacy Matrix crypto as warning-only until the plugin helper is available", async () => {
+    await withTempHome(
+      async (home) => {
+        const stateDir = path.join(home, ".openclaw");
+        fs.mkdirSync(path.join(home, "empty-bundled"), { recursive: true });
+        const { rootDir } = resolveMatrixAccountStorageRoot({
+          stateDir,
+          homeserver: "https://matrix.example.org",
+          userId: "@bot:example.org",
+          accessToken: "tok-123",
+        });
+        fs.mkdirSync(path.join(rootDir, "crypto"), { recursive: true });
+        fs.writeFileSync(
+          path.join(rootDir, "crypto", "bot-sdk.json"),
+          JSON.stringify({ deviceId: "DEVICE123" }),
+          "utf8",
+        );
+
+        const cfg = {
+          channels: {
+            matrix: {
+              homeserver: "https://matrix.example.org",
+              userId: "@bot:example.org",
+              accessToken: "tok-123",
+            },
+          },
+        } as never;
+
+        const detection = detectLegacyMatrixCrypto({
+          cfg,
+          env: process.env,
+        });
+        expect(detection.plans).toHaveLength(1);
+        expect(detection.warnings).toContain(
+          "Legacy Matrix encrypted state was detected, but the Matrix plugin helper is unavailable. Install or repair @openclaw/matrix so OpenClaw can inspect the old rust crypto store before upgrading.",
+        );
+        expect(
+          hasActionableMatrixMigration({
+            cfg,
+            env: process.env,
+          }),
+        ).toBe(false);
+      },
+      {
+        env: {
+          OPENCLAW_BUNDLED_PLUGINS_DIR: (home) => path.join(home, "empty-bundled"),
+        },
+      },
+    );
   });
 });

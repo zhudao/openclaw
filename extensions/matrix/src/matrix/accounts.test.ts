@@ -110,4 +110,42 @@ describe("resolveMatrixAccount", () => {
     expect(listMatrixAccountIds(cfg)).toEqual(["main-bot", "ops"]);
     expect(resolveDefaultMatrixAccountId(cfg)).toBe("main-bot");
   });
+
+  it("returns the only named account when no explicit default is set", () => {
+    const cfg: CoreConfig = {
+      channels: {
+        matrix: {
+          accounts: {
+            ops: {
+              homeserver: "https://matrix.example.org",
+              accessToken: "ops-token",
+            },
+          },
+        },
+      },
+    };
+
+    expect(resolveDefaultMatrixAccountId(cfg)).toBe("ops");
+  });
+
+  it('uses the synthetic "default" account when multiple named accounts need explicit selection', () => {
+    const cfg: CoreConfig = {
+      channels: {
+        matrix: {
+          accounts: {
+            alpha: {
+              homeserver: "https://matrix.example.org",
+              accessToken: "alpha-token",
+            },
+            beta: {
+              homeserver: "https://matrix.example.org",
+              accessToken: "beta-token",
+            },
+          },
+        },
+      },
+    };
+
+    expect(resolveDefaultMatrixAccountId(cfg)).toBe("default");
+  });
 });

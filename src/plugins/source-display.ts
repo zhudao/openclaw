@@ -27,9 +27,13 @@ function tryRelative(root: string, filePath: string): string | null {
   return rel.replaceAll("\\", "/");
 }
 
-export function resolvePluginSourceRoots(params: { workspaceDir?: string }): PluginSourceRoots {
-  const stock = resolveBundledPluginsDir();
-  const global = path.join(resolveConfigDir(), "extensions");
+export function resolvePluginSourceRoots(params: {
+  workspaceDir?: string;
+  env?: NodeJS.ProcessEnv;
+}): PluginSourceRoots {
+  const env = params.env ?? process.env;
+  const stock = resolveBundledPluginsDir(env);
+  const global = path.join(resolveConfigDir(env), "extensions");
   const workspace = params.workspaceDir
     ? path.join(params.workspaceDir, ".openclaw", "extensions")
     : undefined;

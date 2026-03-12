@@ -9,23 +9,40 @@ import {
 } from "./client.js";
 import type { MatrixClient } from "./sdk.js";
 
-export type ResolvedRuntimeMatrixClient = {
+type ResolvedRuntimeMatrixClient = {
   client: MatrixClient;
   stopOnDone: boolean;
 };
+
+type MatrixRuntimeClientReadiness = "none" | "prepared" | "started";
+type ResolvedRuntimeMatrixClientStopMode = "stop" | "persist";
 
 type MatrixResolvedClientHook = (
   client: MatrixClient,
   context: { createdForOneOff: boolean },
 ) => Promise<void> | void;
 
-export function ensureMatrixNodeRuntime() {
+async function ensureResolvedClientReadiness(params: {
+  client: MatrixClient;
+  readiness?: MatrixRuntimeClientReadiness;
+  createdForOneOff: boolean;
+}): Promise<void> {
+  if (params.readiness === "started") {
+    await params.client.start();
+    return;
+  }
+  if (params.readiness === "prepared" || (!params.readiness && params.createdForOneOff)) {
+    await params.client.prepareForOneOff();
+  }
+}
+
+function ensureMatrixNodeRuntime() {
   if (isBunRuntime()) {
     throw new Error("Matrix support requires Node (bun runtime not supported)");
   }
 }
 
-export async function resolveRuntimeMatrixClient(opts: {
+async function resolveRuntimeMatrixClient(opts: {
   client?: MatrixClient;
   cfg?: CoreConfig;
   timeoutMs?: number;
@@ -66,4 +83,59 @@ export async function resolveRuntimeMatrixClient(opts: {
   });
   await opts.onResolved?.(client, { createdForOneOff: true });
   return { client, stopOnDone: true };
+}
+
+export async function resolveRuntimeMatrixClientWithReadiness(opts: {
+  client?: MatrixClient;
+  cfg?: CoreConfig;
+  timeoutMs?: number;
+  accountId?: string | null;
+  readiness?: MatrixRuntimeClientReadiness;
+}): Promise<ResolvedRuntimeMatrixClient> {
+  return await resolveRuntimeMatrixClient({
+    client: opts.client,
+    cfg: opts.cfg,
+    timeoutMs: opts.timeoutMs,
+    accountId: opts.accountId,
+    onResolved: async (client, context) => {
+      await ensureResolvedClientReadiness({
+        client,
+        readiness: opts.readiness,
+        createdForOneOff: context.createdForOneOff,
+      });
+    },
+  });
+}
+
+export async function stopResolvedRuntimeMatrixClient(
+  resolved: ResolvedRuntimeMatrixClient,
+  mode: ResolvedRuntimeMatrixClientStopMode = "stop",
+): Promise<void> {
+  if (!resolved.stopOnDone) {
+    return;
+  }
+  if (mode === "persist") {
+    await resolved.client.stopAndPersist();
+    return;
+  }
+  resolved.client.stop();
+}
+
+export async function withResolvedRuntimeMatrixClient<T>(
+  opts: {
+    client?: MatrixClient;
+    cfg?: CoreConfig;
+    timeoutMs?: number;
+    accountId?: string | null;
+    readiness?: MatrixRuntimeClientReadiness;
+  },
+  run: (client: MatrixClient) => Promise<T>,
+  stopMode: ResolvedRuntimeMatrixClientStopMode = "stop",
+): Promise<T> {
+  const resolved = await resolveRuntimeMatrixClientWithReadiness(opts);
+  try {
+    return await run(resolved.client);
+  } finally {
+    await stopResolvedRuntimeMatrixClient(resolved, stopMode);
+  }
 }

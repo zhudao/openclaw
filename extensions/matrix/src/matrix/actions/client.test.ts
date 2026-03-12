@@ -36,12 +36,11 @@ vi.mock("../send.js", () => ({
   resolveMatrixRoomId: (...args: unknown[]) => resolveMatrixRoomIdMock(...args),
 }));
 
-let resolveActionClient: typeof import("./client.js").resolveActionClient;
 let withResolvedActionClient: typeof import("./client.js").withResolvedActionClient;
 let withResolvedRoomAction: typeof import("./client.js").withResolvedRoomAction;
 let withStartedActionClient: typeof import("./client.js").withStartedActionClient;
 
-describe("resolveActionClient", () => {
+describe("action client helpers", () => {
   beforeEach(async () => {
     vi.resetModules();
     primeMatrixClientResolverMocks();
@@ -49,12 +48,8 @@ describe("resolveActionClient", () => {
       .mockReset()
       .mockImplementation(async (_client, roomId: string) => roomId);
 
-    ({
-      resolveActionClient,
-      withResolvedActionClient,
-      withResolvedRoomAction,
-      withStartedActionClient,
-    } = await import("./client.js"));
+    ({ withResolvedActionClient, withResolvedRoomAction, withStartedActionClient } =
+      await import("./client.js"));
   });
 
   afterEach(() => {
@@ -64,7 +59,7 @@ describe("resolveActionClient", () => {
   it("creates a one-off client even when OPENCLAW_GATEWAY_PORT is set", async () => {
     vi.stubEnv("OPENCLAW_GATEWAY_PORT", "18799");
 
-    const result = await resolveActionClient({ accountId: "default" });
+    const result = await withResolvedActionClient({ accountId: "default" }, async () => "ok");
 
     expect(getActiveMatrixClientMock).toHaveBeenCalledWith("default");
     expect(resolveMatrixAuthMock).toHaveBeenCalledTimes(1);
@@ -76,56 +71,56 @@ describe("resolveActionClient", () => {
     );
     const oneOffClient = await createMatrixClientMock.mock.results[0]?.value;
     expect(oneOffClient.prepareForOneOff).toHaveBeenCalledTimes(1);
-    expect(result.stopOnDone).toBe(true);
+    expect(oneOffClient.stop).toHaveBeenCalledTimes(1);
+    expect(result).toBe("ok");
   });
 
   it("skips one-off room preparation when readiness is disabled", async () => {
-    const result = await resolveActionClient({
-      accountId: "default",
-      readiness: "none",
-    });
+    await withResolvedActionClient({ accountId: "default", readiness: "none" }, async () => {});
 
     const oneOffClient = await createMatrixClientMock.mock.results[0]?.value;
     expect(oneOffClient.prepareForOneOff).not.toHaveBeenCalled();
     expect(oneOffClient.start).not.toHaveBeenCalled();
-    expect(result.stopOnDone).toBe(true);
+    expect(oneOffClient.stop).toHaveBeenCalledTimes(1);
   });
 
   it("starts one-off clients when started readiness is required", async () => {
-    const result = await resolveActionClient({
-      accountId: "default",
-      readiness: "started",
-    });
+    await withStartedActionClient({ accountId: "default" }, async () => {});
 
     const oneOffClient = await createMatrixClientMock.mock.results[0]?.value;
     expect(oneOffClient.start).toHaveBeenCalledTimes(1);
     expect(oneOffClient.prepareForOneOff).not.toHaveBeenCalled();
-    expect(result.stopOnDone).toBe(true);
+    expect(oneOffClient.stop).not.toHaveBeenCalled();
+    expect(oneOffClient.stopAndPersist).toHaveBeenCalledTimes(1);
   });
 
   it("reuses active monitor client when available", async () => {
     const activeClient = createMockMatrixClient();
     getActiveMatrixClientMock.mockReturnValue(activeClient);
 
-    const result = await resolveActionClient({ accountId: "default" });
+    const result = await withResolvedActionClient({ accountId: "default" }, async (client) => {
+      expect(client).toBe(activeClient);
+      return "ok";
+    });
 
-    expect(result).toEqual({ client: activeClient, stopOnDone: false });
+    expect(result).toBe("ok");
     expect(resolveMatrixAuthMock).not.toHaveBeenCalled();
     expect(createMatrixClientMock).not.toHaveBeenCalled();
+    expect(activeClient.stop).not.toHaveBeenCalled();
   });
 
   it("starts active clients when started readiness is required", async () => {
     const activeClient = createMockMatrixClient();
     getActiveMatrixClientMock.mockReturnValue(activeClient);
 
-    const result = await resolveActionClient({
-      accountId: "default",
-      readiness: "started",
+    await withStartedActionClient({ accountId: "default" }, async (client) => {
+      expect(client).toBe(activeClient);
     });
 
-    expect(result).toEqual({ client: activeClient, stopOnDone: false });
     expect(activeClient.start).toHaveBeenCalledTimes(1);
     expect(activeClient.prepareForOneOff).not.toHaveBeenCalled();
+    expect(activeClient.stop).not.toHaveBeenCalled();
+    expect(activeClient.stopAndPersist).not.toHaveBeenCalled();
   });
 
   it("uses the implicit resolved account id for active client lookup and storage", async () => {
@@ -164,7 +159,7 @@ describe("resolveActionClient", () => {
       encryption: true,
     });
 
-    await resolveActionClient({});
+    await withResolvedActionClient({}, async () => {});
 
     expect(getActiveMatrixClientMock).toHaveBeenCalledWith("ops");
     expect(resolveMatrixAuthMock).toHaveBeenCalledWith(
@@ -189,10 +184,7 @@ describe("resolveActionClient", () => {
       },
     };
 
-    await resolveActionClient({
-      cfg: explicitCfg,
-      accountId: "ops",
-    });
+    await withResolvedActionClient({ cfg: explicitCfg, accountId: "ops" }, async () => {});
 
     expect(getMatrixRuntimeMock).not.toHaveBeenCalled();
     expect(resolveMatrixAuthContextMock).toHaveBeenCalledWith({
@@ -231,20 +223,6 @@ describe("resolveActionClient", () => {
 
     expect(oneOffClient.stop).toHaveBeenCalledTimes(1);
     expect(oneOffClient.stopAndPersist).not.toHaveBeenCalled();
-  });
-
-  it("persists one-off action clients after started wrappers complete", async () => {
-    const oneOffClient = createMockMatrixClient();
-    createMatrixClientMock.mockResolvedValue(oneOffClient);
-
-    await withStartedActionClient({ accountId: "default" }, async (client) => {
-      expect(client).toBe(oneOffClient);
-      return undefined;
-    });
-
-    expect(oneOffClient.start).toHaveBeenCalledTimes(1);
-    expect(oneOffClient.stop).not.toHaveBeenCalled();
-    expect(oneOffClient.stopAndPersist).toHaveBeenCalledTimes(1);
   });
 
   it("resolves room ids before running wrapped room actions", async () => {

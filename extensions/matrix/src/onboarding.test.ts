@@ -356,4 +356,42 @@ describe("matrix onboarding", () => {
     expect(status.statusLines).toContain("Matrix: configured");
     expect(status.selectionHint).toBe("configured");
   });
+
+  it("asks for defaultAccount when multiple named Matrix accounts exist", async () => {
+    setMatrixRuntime({
+      state: {
+        resolveStateDir: (_env: NodeJS.ProcessEnv, homeDir?: () => string) =>
+          (homeDir ?? (() => "/tmp"))(),
+      },
+      config: {
+        loadConfig: () => ({}),
+      },
+    } as never);
+
+    const status = await matrixOnboardingAdapter.getStatus({
+      cfg: {
+        channels: {
+          matrix: {
+            accounts: {
+              assistant: {
+                homeserver: "https://matrix.assistant.example.org",
+                accessToken: "assistant-token",
+              },
+              ops: {
+                homeserver: "https://matrix.ops.example.org",
+                accessToken: "ops-token",
+              },
+            },
+          },
+        },
+      } as CoreConfig,
+      accountOverrides: {},
+    });
+
+    expect(status.configured).toBe(false);
+    expect(status.statusLines).toEqual([
+      'Matrix: set "channels.matrix.defaultAccount" to select a named account',
+    ]);
+    expect(status.selectionHint).toBe("set defaultAccount");
+  });
 });

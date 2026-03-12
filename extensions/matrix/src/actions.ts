@@ -2,6 +2,7 @@ import {
   createActionGate,
   readNumberParam,
   readStringParam,
+  requiresExplicitMatrixDefaultAccount,
   type ChannelMessageActionAdapter,
   type ChannelMessageActionContext,
   type ChannelMessageActionName,
@@ -66,6 +67,9 @@ function createMatrixExposedActions(params: {
 export const matrixMessageActions: ChannelMessageActionAdapter = {
   listActions: ({ cfg }) => {
     const resolvedCfg = cfg as CoreConfig;
+    if (requiresExplicitMatrixDefaultAccount(resolvedCfg)) {
+      return [];
+    }
     const account = resolveMatrixAccount({
       cfg: resolvedCfg,
       accountId: resolveDefaultMatrixAccountId(resolvedCfg),

@@ -124,7 +124,7 @@ If your old installation had local-only encrypted history that was never backed 
 Encrypted migration is a two-stage process:
 
 1. Startup or `openclaw doctor --fix` creates or reuses the pre-migration snapshot if encrypted migration is actionable.
-2. Startup or `openclaw doctor --fix` inspects the old Matrix crypto store.
+2. Startup or `openclaw doctor --fix` inspects the old Matrix crypto store through the active Matrix plugin install.
 3. If a backup decryption key is found, OpenClaw writes it into the new recovery-key flow and marks room-key restore as pending.
 4. On the next Matrix startup, OpenClaw restores backed-up room keys into the new crypto store automatically.
 
@@ -193,6 +193,16 @@ If the old store reports room keys that were never backed up, OpenClaw warns ins
 
 - Meaning: OpenClaw detected old Matrix state, but the migration is still blocked on missing identity or credential data.
 - What to do: finish Matrix login or config setup, then rerun `openclaw doctor --fix` or restart the gateway.
+
+`Legacy Matrix encrypted state was detected, but the Matrix plugin helper is unavailable. Install or repair @openclaw/matrix so OpenClaw can inspect the old rust crypto store before upgrading.`
+
+- Meaning: OpenClaw found old encrypted Matrix state, but it could not load the helper entrypoint from the Matrix plugin that normally inspects that store.
+- What to do: reinstall or repair the Matrix plugin (`openclaw plugins install @openclaw/matrix`, or `openclaw plugins install ./extensions/matrix` for a repo checkout), then rerun `openclaw doctor --fix` or restart the gateway.
+
+`Matrix plugin helper path is unsafe: ... Reinstall @openclaw/matrix and try again.`
+
+- Meaning: OpenClaw found a helper file path that escapes the plugin root or fails plugin boundary checks, so it refused to import it.
+- What to do: reinstall the Matrix plugin from a trusted path, then rerun `openclaw doctor --fix` or restart the gateway.
 
 `gateway: failed creating a Matrix migration snapshot; skipping Matrix migration for now: ...`
 

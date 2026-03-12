@@ -8,6 +8,7 @@ import { createBackupArchive } from "./backup-create.js";
 import { resolveRequiredHomeDir } from "./home-dir.js";
 import { detectLegacyMatrixCrypto } from "./matrix-legacy-crypto.js";
 import { detectLegacyMatrixState } from "./matrix-legacy-state.js";
+import { isMatrixLegacyCryptoInspectorAvailable } from "./matrix-plugin-helper.js";
 
 const MATRIX_MIGRATION_SNAPSHOT_DIRNAME = "openclaw-migrations";
 
@@ -90,7 +91,13 @@ export function hasActionableMatrixMigration(params: {
     return true;
   }
   const legacyCrypto = detectLegacyMatrixCrypto({ cfg: params.cfg, env });
-  return legacyCrypto.plans.length > 0;
+  return (
+    legacyCrypto.plans.length > 0 &&
+    isMatrixLegacyCryptoInspectorAvailable({
+      cfg: params.cfg,
+      env,
+    })
+  );
 }
 
 export async function maybeCreateMatrixMigrationSnapshot(params: {

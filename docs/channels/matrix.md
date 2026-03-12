@@ -262,6 +262,7 @@ All `verify` commands are concise by default (including quiet internal SDK loggi
 Use `--json` for full machine-readable output when scripting.
 
 In multi-account setups, Matrix CLI commands use the implicit Matrix default account unless you pass `--account <id>`.
+If you configure multiple named accounts, set `channels.matrix.defaultAccount` first or those implicit CLI operations will stop and ask you to choose an account explicitly.
 Use `--account` whenever you want verification or device operations to target a named account explicitly:
 
 ```bash
@@ -531,6 +532,7 @@ See [Pairing](/channels/pairing) for the shared DM pairing flow and storage layo
 
 Top-level `channels.matrix` values act as defaults for named accounts unless an account overrides them.
 Set `defaultAccount` when you want OpenClaw to prefer one named Matrix account for implicit routing, probing, and CLI operations.
+If you configure multiple named accounts, set `defaultAccount` or pass `--account <id>` for CLI commands that rely on implicit account selection.
 Pass `--account <id>` to `openclaw matrix verify ...` and `openclaw matrix devices ...` when you want to override that implicit selection for one command.
 
 ## Target resolution
@@ -550,6 +552,7 @@ Live directory lookup uses the logged-in Matrix account:
 ## Configuration reference
 
 - `enabled`: enable or disable the channel.
+- `name`: optional label for the account.
 - `defaultAccount`: preferred account ID when multiple Matrix accounts are configured.
 - `homeserver`: homeserver URL, for example `https://matrix.example.org`.
 - `userId`: full Matrix user ID, for example `@bot:example.org`.
@@ -557,6 +560,7 @@ Live directory lookup uses the logged-in Matrix account:
 - `password`: password for password-based login.
 - `deviceId`: explicit Matrix device ID.
 - `deviceName`: device display name for password login.
+- `avatarUrl`: stored self-avatar URL for profile sync and `set-profile` updates.
 - `initialSyncLimit`: startup sync event limit.
 - `encryption`: enable E2EE.
 - `allowlistOnly`: force allowlist-only behavior for DMs and rooms.
@@ -582,4 +586,4 @@ Live directory lookup uses the logged-in Matrix account:
 - `accounts`: named per-account overrides. Top-level `channels.matrix` values act as defaults for these entries.
 - `groups`: per-room policy map. Prefer room IDs or aliases; unresolved room names are ignored at runtime. Session/group identity uses the stable room ID after resolution, while human-readable labels still come from room names.
 - `rooms`: legacy alias for `groups`.
-- `actions`: per-action tool gating (`messages`, `reactions`, `pins`, `memberInfo`, `channelInfo`, `verification`).
+- `actions`: per-action tool gating (`messages`, `reactions`, `pins`, `profile`, `memberInfo`, `channelInfo`, `verification`).

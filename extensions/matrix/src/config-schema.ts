@@ -4,9 +4,12 @@ import {
   DmPolicySchema,
   GroupPolicySchema,
 } from "openclaw/plugin-sdk/compat";
-import { MarkdownConfigSchema, ToolPolicySchema } from "openclaw/plugin-sdk/matrix";
+import {
+  buildSecretInputSchema,
+  MarkdownConfigSchema,
+  ToolPolicySchema,
+} from "openclaw/plugin-sdk/matrix";
 import { z } from "zod";
-import { buildSecretInputSchema } from "./secret-input.js";
 
 const matrixActionSchema = z
   .object({
@@ -81,5 +84,4 @@ export const MatrixConfigSchema = z.object({
   groups: z.object({}).catchall(matrixRoomSchema).optional(),
   rooms: z.object({}).catchall(matrixRoomSchema).optional(),
   actions: matrixActionSchema,
-  register: z.boolean().optional(),
 });

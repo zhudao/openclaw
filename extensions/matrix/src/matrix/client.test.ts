@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CoreConfig } from "../types.js";
 import {
   resolveImplicitMatrixAccountId,
-  resolveMatrixAuth,
-  resolveMatrixAuthContext,
   resolveMatrixConfig,
   resolveMatrixConfigForAccount,
+  resolveMatrixAuth,
+  resolveMatrixAuthContext,
   validateMatrixHomeserverUrl,
-} from "./client.js";
+} from "./client/config.js";
 import * as credentialsModule from "./credentials.js";
 import * as sdkModule from "./sdk.js";
 
@@ -142,9 +142,33 @@ describe("resolveMatrixConfig", () => {
       },
     } as CoreConfig;
 
-    expect(resolveImplicitMatrixAccountId(cfg, {} as NodeJS.ProcessEnv)).toBeNull();
+    expect(resolveImplicitMatrixAccountId(cfg, {} as NodeJS.ProcessEnv)).toBe("default");
     expect(resolveMatrixAuthContext({ cfg, env: {} as NodeJS.ProcessEnv }).accountId).toBe(
       "default",
+    );
+  });
+
+  it("requires explicit defaultAccount selection when multiple named Matrix accounts exist", () => {
+    const cfg = {
+      channels: {
+        matrix: {
+          accounts: {
+            assistant: {
+              homeserver: "https://matrix.assistant.example.org",
+              accessToken: "assistant-token",
+            },
+            ops: {
+              homeserver: "https://matrix.ops.example.org",
+              accessToken: "ops-token",
+            },
+          },
+        },
+      },
+    } as CoreConfig;
+
+    expect(resolveImplicitMatrixAccountId(cfg, {} as NodeJS.ProcessEnv)).toBeNull();
+    expect(() => resolveMatrixAuthContext({ cfg, env: {} as NodeJS.ProcessEnv })).toThrow(
+      /channels\.matrix\.defaultAccount.*--account <id>/i,
     );
   });
 

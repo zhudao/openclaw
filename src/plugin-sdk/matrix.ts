@@ -20,7 +20,6 @@ export {
   addAllowlistUserEntriesFromConfigEntry,
   buildAllowlistResolutionSummary,
   canonicalizeAllowlistWithResolvedIds,
-  mergeAllowlist,
   patchAllowlistUsersInConfigEntries,
   summarizeMapping,
 } from "../channels/allowlists/resolve-utils.js";
@@ -46,20 +45,15 @@ export type {
 } from "../channels/plugins/onboarding-types.js";
 export { promptChannelAccessConfig } from "../channels/plugins/onboarding/channel-access.js";
 export {
-  buildSingleChannelSecretPromptState,
   addWildcardAllowFrom,
   mergeAllowFromEntries,
   promptAccountId,
-  promptSingleChannelSecretInput,
-  setTopLevelChannelGroupPolicy,
 } from "../channels/plugins/onboarding/helpers.js";
 export { PAIRING_APPROVED_MESSAGE } from "../channels/plugins/pairing-message.js";
 export {
   applyAccountNameToChannelSection,
-  migrateBaseNameToDefaultAccount,
   moveSingleAccountChannelSectionToDefaultAccount,
 } from "../channels/plugins/setup-helpers.js";
-export { createAccountListHelpers } from "../channels/plugins/account-helpers.js";
 export type {
   BaseProbeResult,
   ChannelDirectoryEntry,
@@ -75,7 +69,6 @@ export type {
 } from "../channels/plugins/types.js";
 export type { ChannelPlugin } from "../channels/plugins/types.plugin.js";
 export { createReplyPrefixOptions } from "../channels/reply-prefix.js";
-export { resolveInboundSessionEnvelopeContext } from "../channels/session-envelope.js";
 export { resolveThreadBindingFarewellText } from "../channels/thread-bindings-messages.js";
 export {
   resolveThreadBindingIdleTimeoutMsForChannel,
@@ -106,28 +99,17 @@ export { ToolPolicySchema } from "../config/zod-schema.agent-runtime.js";
 export { MarkdownConfigSchema } from "../config/zod-schema.core.js";
 export { formatZonedTimestamp } from "../infra/format-time/format-datetime.js";
 export {
-  hashMatrixAccessToken,
   resolveMatrixAccountStorageRoot,
   resolveMatrixCredentialsDir,
-  resolveMatrixCredentialsFilename,
   resolveMatrixCredentialsPath,
-  resolveMatrixHomeserverKey,
   resolveMatrixLegacyFlatStoragePaths,
-  sanitizeMatrixPathSegment,
 } from "../infra/matrix-storage-paths.js";
 export {
   requiresExplicitMatrixDefaultAccount,
   resolveMatrixDefaultOrOnlyAccountId,
 } from "../infra/matrix-account-selection.js";
-export {
-  hasActionableMatrixMigration,
-  hasPendingMatrixMigration,
-  maybeCreateMatrixMigrationSnapshot,
-  resolveMatrixMigrationSnapshotMarkerPath,
-  resolveMatrixMigrationSnapshotOutputDir,
-} from "../infra/matrix-migration-snapshot.js";
+export { maybeCreateMatrixMigrationSnapshot } from "../infra/matrix-migration-snapshot.js";
 export { getAgentScopedMediaLocalRoots } from "../media/local-roots.js";
-export { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
 export { isPrivateOrLoopbackHost } from "../gateway/net.js";
 export {
   getSessionBindingService,
@@ -136,10 +118,8 @@ export {
 } from "../infra/outbound/session-binding-service.js";
 export type {
   BindingTargetKind,
-  SessionBindingAdapter,
   SessionBindingRecord,
 } from "../infra/outbound/session-binding-service.js";
-export { issuePairingChallenge } from "../pairing/pairing-challenge.js";
 export { emptyPluginConfigSchema } from "../plugins/config-schema.js";
 export type { PluginRuntime, RuntimeLogger } from "../plugins/runtime/types.js";
 export type { OpenClawPluginApi } from "../plugins/types.js";
@@ -152,26 +132,9 @@ export {
   resolveAgentIdFromSessionKey,
 } from "../routing/session-key.js";
 export type { RuntimeEnv } from "../runtime.js";
-export {
-  readStoreAllowFromForDmPolicy,
-  resolveDmGroupAccessWithLists,
-} from "../security/dm-policy-shared.js";
 export { normalizeStringEntries } from "../shared/string-normalization.js";
 export { formatDocsLink } from "../terminal/links.js";
 export { redactSensitiveText } from "../logging/redact.js";
 export type { WizardPrompter } from "../wizard/prompts.js";
-export {
-  evaluateGroupRouteAccessForPolicy,
-  resolveSenderScopedGroupPolicy,
-} from "./group-access.js";
-export { dispatchReplyFromConfigWithSettledDispatcher } from "./inbound-reply-dispatch.js";
 export { readJsonFileWithFallback, writeJsonFileAtomically } from "./json-store.js";
-export { createScopedPairingAccess } from "./pairing-access.js";
-export { formatResolvedUnresolvedNote } from "./resolution-notes.js";
-export { runPluginCommandWithTimeout } from "./run-command.js";
-export { createLoggerBackedRuntime, resolveRuntimeEnv } from "./runtime.js";
-export {
-  buildProbeChannelStatusSummary,
-  collectStatusIssuesFromLastError,
-} from "./status-helpers.js";
 export type { GatewayRequestHandlerOptions } from "../gateway/server-methods/types.js";

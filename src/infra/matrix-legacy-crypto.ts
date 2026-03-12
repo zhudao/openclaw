@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +9,12 @@ import {
   resolveLegacyMatrixFlatStoreTarget,
   resolveMatrixMigrationAccountTarget,
 } from "./matrix-migration-config.js";
+import {
+  MATRIX_LEGACY_CRYPTO_INSPECTOR_UNAVAILABLE_MESSAGE,
+  isMatrixLegacyCryptoInspectorAvailable,
+  loadMatrixLegacyCryptoInspector,
+  type MatrixLegacyCryptoInspector,
+} from "./matrix-plugin-helper.js";
 import { resolveMatrixLegacyFlatStoragePaths } from "./matrix-storage-paths.js";
 
 type MatrixLegacyCryptoCounts = {
@@ -24,7 +29,7 @@ type MatrixLegacyCryptoSummary = {
   decryptionKeyBase64: string | null;
 };
 
-export type MatrixLegacyCryptoMigrationState = {
+type MatrixLegacyCryptoMigrationState = {
   version: 1;
   source: "matrix-bot-sdk-rust";
   accountId: string;
@@ -57,18 +62,14 @@ type MatrixLegacyCryptoDetection = {
   warnings: string[];
 };
 
-export type MatrixLegacyCryptoPreparationResult = {
+type MatrixLegacyCryptoPreparationResult = {
   migrated: boolean;
   changes: string[];
   warnings: string[];
 };
 
-export type MatrixLegacyCryptoPrepareDeps = {
-  inspectLegacyStore: (params: {
-    cryptoRootDir: string;
-    userId: string;
-    deviceId: string;
-  }) => Promise<MatrixLegacyCryptoSummary>;
+type MatrixLegacyCryptoPrepareDeps = {
+  inspectLegacyStore: MatrixLegacyCryptoInspector;
 };
 
 type MatrixLegacyBotSdkMetadata = {
@@ -281,75 +282,6 @@ function loadLegacyCryptoMigrationState(filePath: string): MatrixLegacyCryptoMig
   }
 }
 
-function resolveLegacyMachineStorePath(params: {
-  cryptoRootDir: string;
-  deviceId: string;
-}): string | null {
-  const hashedDir = path.join(
-    params.cryptoRootDir,
-    crypto.createHash("sha256").update(params.deviceId).digest("hex"),
-  );
-  if (fs.existsSync(path.join(hashedDir, "matrix-sdk-crypto.sqlite3"))) {
-    return hashedDir;
-  }
-  if (fs.existsSync(path.join(params.cryptoRootDir, "matrix-sdk-crypto.sqlite3"))) {
-    return params.cryptoRootDir;
-  }
-  const match = fs
-    .readdirSync(params.cryptoRootDir, { withFileTypes: true })
-    .find(
-      (entry) =>
-        entry.isDirectory() &&
-        fs.existsSync(path.join(params.cryptoRootDir, entry.name, "matrix-sdk-crypto.sqlite3")),
-    );
-  return match ? path.join(params.cryptoRootDir, match.name) : null;
-}
-
-async function inspectLegacyStoreWithCryptoNodejs(params: {
-  cryptoRootDir: string;
-  userId: string;
-  deviceId: string;
-}): Promise<MatrixLegacyCryptoSummary> {
-  const machineStorePath = resolveLegacyMachineStorePath(params);
-  if (!machineStorePath) {
-    throw new Error(`Matrix legacy crypto store not found for device ${params.deviceId}`);
-  }
-  const { DeviceId, OlmMachine, StoreType, UserId } =
-    await import("@matrix-org/matrix-sdk-crypto-nodejs");
-  const machine = await OlmMachine.initialize(
-    new UserId(params.userId),
-    new DeviceId(params.deviceId),
-    machineStorePath,
-    "",
-    StoreType.Sqlite,
-  );
-  try {
-    const [backupKeys, roomKeyCounts] = await Promise.all([
-      machine.getBackupKeys(),
-      machine.roomKeyCounts(),
-    ]);
-    return {
-      deviceId: params.deviceId,
-      roomKeyCounts: roomKeyCounts
-        ? {
-            total: typeof roomKeyCounts.total === "number" ? roomKeyCounts.total : 0,
-            backedUp: typeof roomKeyCounts.backedUp === "number" ? roomKeyCounts.backedUp : 0,
-          }
-        : null,
-      backupVersion:
-        typeof backupKeys?.backupVersion === "string" && backupKeys.backupVersion.trim()
-          ? backupKeys.backupVersion
-          : null,
-      decryptionKeyBase64:
-        typeof backupKeys?.decryptionKeyBase64 === "string" && backupKeys.decryptionKeyBase64.trim()
-          ? backupKeys.decryptionKeyBase64
-          : null,
-    };
-  } finally {
-    machine.close();
-  }
-}
-
 async function persistLegacyMigrationState(params: {
   filePath: string;
   state: MatrixLegacyCryptoMigrationState;
@@ -361,10 +293,23 @@ export function detectLegacyMatrixCrypto(params: {
   cfg: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
 }): MatrixLegacyCryptoDetection {
-  return resolveMatrixLegacyCryptoPlans({
+  const detection = resolveMatrixLegacyCryptoPlans({
     cfg: params.cfg,
     env: params.env ?? process.env,
   });
+  if (
+    detection.plans.length > 0 &&
+    !isMatrixLegacyCryptoInspectorAvailable({
+      cfg: params.cfg,
+      env: params.env,
+    })
+  ) {
+    return {
+      plans: detection.plans,
+      warnings: [...detection.warnings, MATRIX_LEGACY_CRYPTO_INSPECTOR_UNAVAILABLE_MESSAGE],
+    };
+  }
+  return detection;
 }
 
 export async function autoPrepareLegacyMatrixCrypto(params: {
@@ -374,10 +319,35 @@ export async function autoPrepareLegacyMatrixCrypto(params: {
   deps?: Partial<MatrixLegacyCryptoPrepareDeps>;
 }): Promise<MatrixLegacyCryptoPreparationResult> {
   const env = params.env ?? process.env;
-  const detection = resolveMatrixLegacyCryptoPlans({ cfg: params.cfg, env });
+  const detection = params.deps?.inspectLegacyStore
+    ? resolveMatrixLegacyCryptoPlans({ cfg: params.cfg, env })
+    : detectLegacyMatrixCrypto({ cfg: params.cfg, env });
   const warnings = [...detection.warnings];
   const changes: string[] = [];
-  const inspectLegacyStore = params.deps?.inspectLegacyStore ?? inspectLegacyStoreWithCryptoNodejs;
+  let inspectLegacyStore = params.deps?.inspectLegacyStore;
+  if (!inspectLegacyStore) {
+    try {
+      inspectLegacyStore = await loadMatrixLegacyCryptoInspector({
+        cfg: params.cfg,
+        env,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!warnings.includes(message)) {
+        warnings.push(message);
+      }
+      if (warnings.length > 0) {
+        params.log?.warn?.(
+          `matrix: legacy encrypted-state warnings:\n${warnings.map((entry) => `- ${entry}`).join("\n")}`,
+        );
+      }
+      return {
+        migrated: false,
+        changes,
+        warnings,
+      };
+    }
+  }
 
   for (const plan of detection.plans) {
     const existingState = loadLegacyCryptoMigrationState(plan.statePath);
@@ -398,6 +368,7 @@ export async function autoPrepareLegacyMatrixCrypto(params: {
         cryptoRootDir: plan.legacyCryptoPath,
         userId: plan.userId,
         deviceId: plan.deviceId,
+        log: params.log?.info,
       });
     } catch (err) {
       warnings.push(

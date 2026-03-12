@@ -118,4 +118,27 @@ describe("matrixMessageActions", () => {
 
     expect(actions).toEqual(["poll", "poll-vote"]);
   });
+
+  it("hides actions until defaultAccount is set for ambiguous multi-account configs", () => {
+    const actions = matrixMessageActions.listActions!({
+      cfg: {
+        channels: {
+          matrix: {
+            accounts: {
+              assistant: {
+                homeserver: "https://matrix.example.org",
+                accessToken: "assistant-token",
+              },
+              ops: {
+                homeserver: "https://matrix.example.org",
+                accessToken: "ops-token",
+              },
+            },
+          },
+        },
+      } as CoreConfig,
+    } as never);
+
+    expect(actions).toEqual([]);
+  });
 });

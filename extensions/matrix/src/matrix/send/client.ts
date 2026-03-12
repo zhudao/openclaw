@@ -1,10 +1,7 @@
 import { getMatrixRuntime } from "../../runtime.js";
 import type { CoreConfig } from "../../types.js";
 import { resolveMatrixAccountConfig } from "../accounts.js";
-import {
-  resolveRuntimeMatrixClient,
-  type ResolvedRuntimeMatrixClient,
-} from "../client-bootstrap.js";
+import { withResolvedRuntimeMatrixClient } from "../client-bootstrap.js";
 import type { MatrixClient } from "../sdk.js";
 
 const getCore = () => getMatrixRuntime();
@@ -22,31 +19,6 @@ export function resolveMediaMaxBytes(
   return undefined;
 }
 
-export async function resolveMatrixClient(opts: {
-  client?: MatrixClient;
-  cfg?: CoreConfig;
-  timeoutMs?: number;
-  accountId?: string | null;
-}): Promise<{ client: MatrixClient; stopOnDone: boolean }> {
-  return await resolveRuntimeMatrixClient({
-    client: opts.client,
-    cfg: opts.cfg,
-    timeoutMs: opts.timeoutMs,
-    accountId: opts.accountId,
-    onResolved: async (client, context) => {
-      if (context.createdForOneOff) {
-        await client.prepareForOneOff();
-      }
-    },
-  });
-}
-
-function stopResolvedMatrixClient(resolved: ResolvedRuntimeMatrixClient): void {
-  if (resolved.stopOnDone) {
-    resolved.client.stop();
-  }
-}
-
 export async function withResolvedMatrixClient<T>(
   opts: {
     client?: MatrixClient;
@@ -56,10 +28,11 @@ export async function withResolvedMatrixClient<T>(
   },
   run: (client: MatrixClient) => Promise<T>,
 ): Promise<T> {
-  const resolved = await resolveMatrixClient(opts);
-  try {
-    return await run(resolved.client);
-  } finally {
-    stopResolvedMatrixClient(resolved);
-  }
+  return await withResolvedRuntimeMatrixClient(
+    {
+      ...opts,
+      readiness: "prepared",
+    },
+    run,
+  );
 }
