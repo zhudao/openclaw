@@ -9,7 +9,14 @@ type CacheEntry = {
   timestamps: Map<number, number>;
 };
 
-const sentMessages = new Map<string, CacheEntry>();
+/**
+ * Keep sent-message tracking shared across bundled chunks so Telegram reaction
+ * filters see the same sent-message history regardless of which chunk recorded it.
+ */
+const _g = globalThis as typeof globalThis & {
+  __openclaw_telegram_sent_messages__?: Map<string, CacheEntry>;
+};
+const sentMessages = (_g.__openclaw_telegram_sent_messages__ ??= new Map<string, CacheEntry>());
 
 function getChatKey(chatId: number | string): string {
   return String(chatId);
