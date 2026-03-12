@@ -8,6 +8,31 @@ import { getMatrixRuntime } from "../../runtime.js";
 import type { MatrixClient } from "../sdk.js";
 import { sendMessageMatrix } from "../send.js";
 
+const THINKING_TAG_RE = /<\s*\/?\s*(?:think(?:ing)?|thought|antthinking)\b[^<>]*>/gi;
+const THINKING_BLOCK_RE =
+  /<\s*(?:think(?:ing)?|thought|antthinking)\b[^<>]*>[\s\S]*?<\s*\/\s*(?:think(?:ing)?|thought|antthinking)\s*>/gi;
+
+function shouldSuppressReasoningReplyText(text?: string): boolean {
+  if (typeof text !== "string") {
+    return false;
+  }
+  const trimmedStart = text.trimStart();
+  if (!trimmedStart) {
+    return false;
+  }
+  if (trimmedStart.toLowerCase().startsWith("reasoning:")) {
+    return true;
+  }
+  THINKING_TAG_RE.lastIndex = 0;
+  if (!THINKING_TAG_RE.test(text)) {
+    return false;
+  }
+  THINKING_BLOCK_RE.lastIndex = 0;
+  const withoutThinkingBlocks = text.replace(THINKING_BLOCK_RE, "");
+  THINKING_TAG_RE.lastIndex = 0;
+  return !withoutThinkingBlocks.replace(THINKING_TAG_RE, "").trim();
+}
+
 export async function deliverMatrixReplies(params: {
   cfg: OpenClawConfig;
   replies: ReplyPayload[];
@@ -37,6 +62,10 @@ export async function deliverMatrixReplies(params: {
   const chunkMode = core.channel.text.resolveChunkMode(params.cfg, "matrix", params.accountId);
   let hasReplied = false;
   for (const reply of params.replies) {
+    if (reply.isReasoning === true || shouldSuppressReasoningReplyText(reply.text)) {
+      logVerbose("matrix reply suppressed as reasoning-only");
+      continue;
+    }
     const hasMedia = Boolean(reply?.mediaUrl) || (reply?.mediaUrls?.length ?? 0) > 0;
     if (!reply?.text && !hasMedia) {
       if (reply?.audioAsVoice) {

@@ -137,6 +137,29 @@ describe("deliverMatrixReplies", () => {
     );
   });
 
+  it("suppresses reasoning-only text before Matrix sends", async () => {
+    await deliverMatrixReplies({
+      cfg,
+      replies: [
+        { text: "Reasoning:\n_hidden_" },
+        { text: "<think>still hidden</think>" },
+        { text: "Visible answer" },
+      ],
+      roomId: "room:5",
+      client: {} as MatrixClient,
+      runtime: runtimeEnv,
+      textLimit: 4000,
+      replyToMode: "off",
+    });
+
+    expect(sendMessageMatrixMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMatrixMock).toHaveBeenCalledWith(
+      "room:5",
+      "Visible answer",
+      expect.objectContaining({ cfg }),
+    );
+  });
+
   it("uses supplied cfg for chunking and send delivery without reloading runtime config", async () => {
     const explicitCfg = {
       channels: {
