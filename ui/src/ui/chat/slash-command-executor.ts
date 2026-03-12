@@ -298,7 +298,10 @@ async function executeKill(
     const results = await Promise.allSettled(
       matched.map((key) => client.request("chat.abort", { sessionKey: key })),
     );
-    const successCount = results.filter((entry) => entry.status === "fulfilled").length;
+    const successCount = results.filter(
+      (entry) =>
+        entry.status === "fulfilled" && (entry.value as { aborted?: boolean })?.aborted !== false,
+    ).length;
     if (successCount === 0) {
       const firstFailure = results.find((entry) => entry.status === "rejected");
       throw firstFailure?.reason ?? new Error("abort failed");
@@ -343,8 +346,11 @@ function resolveKillTargets(
     }
     const normalizedKey = key.toLowerCase();
     const parsed = parseAgentSessionKey(normalizedKey);
+    // P1: Scope /kill all to the current agent's session subtree
+    const isInCurrentTree =
+      currentParsed?.agentId != null && parsed?.agentId === currentParsed.agentId;
     const isMatch =
-      normalizedTarget === "all" ||
+      (normalizedTarget === "all" && isInCurrentTree) ||
       normalizedKey === normalizedTarget ||
       (parsed?.agentId ?? "") === normalizedTarget ||
       normalizedKey.endsWith(`:subagent:${normalizedTarget}`) ||

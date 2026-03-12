@@ -291,6 +291,8 @@ function switchChatSession(state: AppViewState, nextSessionKey: string) {
   state.sessionKey = nextSessionKey;
   state.chatMessage = "";
   state.chatStream = null;
+  // P1: Clear queued chat items from the previous session
+  (state as unknown as { chatQueue: unknown[] }).chatQueue = [];
   (state as unknown as OpenClawApp).chatStreamStartedAt = null;
   state.chatRunId = null;
   (state as unknown as OpenClawApp).resetToolStream();

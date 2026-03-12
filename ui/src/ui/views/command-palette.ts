@@ -147,6 +147,9 @@ function scrollActiveIntoView() {
 
 function handleKeydown(e: KeyboardEvent, props: CommandPaletteProps) {
   const items = filteredItems(props.query);
+  if (items.length === 0 && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter")) {
+    return;
+  }
   switch (e.key) {
     case "ArrowDown":
       e.preventDefault();
