@@ -1,32 +1,19 @@
 import { createScopedChannelConfigAdapter } from "openclaw/plugin-sdk/channel-config-helpers";
-import type { OpenClawConfig, ResolvedLineAccount } from "../api.js";
-import { getLineRuntime } from "./runtime.js";
-
-function resolveLineRuntimeAccount(cfg: OpenClawConfig, accountId?: string | null) {
-  return getLineRuntime().channel.line.resolveLineAccount({
-    cfg,
-    accountId: accountId ?? undefined,
-  });
-}
-
-export function normalizeLineAllowFrom(entry: string): string {
-  return entry.replace(/^line:(?:user:)?/i, "");
-}
+import { normalizeStringEntries } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { listLineAccountIds, resolveDefaultLineAccountId, resolveLineAccount } from "./accounts.js";
+import { normalizeLineAllowEntry } from "./bot-access.js";
+import type { ResolvedLineAccount } from "./types.js";
 
 export const lineConfigAdapter = createScopedChannelConfigAdapter<
   ResolvedLineAccount,
-  ResolvedLineAccount,
-  OpenClawConfig
+  ResolvedLineAccount
 >({
   sectionKey: "line",
-  listAccountIds: (cfg) => getLineRuntime().channel.line.listLineAccountIds(cfg),
-  resolveAccount: (cfg, accountId) => resolveLineRuntimeAccount(cfg, accountId),
-  defaultAccountId: (cfg) => getLineRuntime().channel.line.resolveDefaultLineAccountId(cfg),
-  clearBaseFields: ["channelSecret", "tokenFile", "secretFile"],
+  listAccountIds: listLineAccountIds,
+  resolveAccount: (cfg, accountId) =>
+    resolveLineAccount({ cfg, accountId: accountId ?? undefined }),
+  defaultAccountId: resolveDefaultLineAccountId,
+  clearBaseFields: ["channelAccessToken", "channelSecret", "tokenFile", "secretFile", "name"],
   resolveAllowFrom: (account) => account.config.allowFrom,
-  formatAllowFrom: (allowFrom) =>
-    allowFrom
-      .map((entry) => String(entry).trim())
-      .filter(Boolean)
-      .map(normalizeLineAllowFrom),
+  formatAllowFrom: (allowFrom) => normalizeStringEntries(allowFrom).map(normalizeLineAllowEntry),
 });

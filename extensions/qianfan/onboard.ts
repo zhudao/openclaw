@@ -1,9 +1,4 @@
-import {
-  applyAgentDefaultModelPrimary,
-  applyProviderConfigWithDefaultModels,
-  type ModelApi,
-  type OpenClawConfig,
-} from "openclaw/plugin-sdk/provider-onboard";
+import { createDefaultModelsConnectionPresetAppliers } from "openclaw/plugin-sdk/provider-onboard";
 import {
   buildQianfanProvider,
   QIANFAN_BASE_URL,
@@ -12,37 +7,19 @@ import {
 
 export const QIANFAN_DEFAULT_MODEL_REF = `qianfan/${QIANFAN_DEFAULT_MODEL_ID}`;
 
-export function applyQianfanProviderConfig(cfg: OpenClawConfig): OpenClawConfig {
-  const models = { ...cfg.agents?.defaults?.models };
-  models[QIANFAN_DEFAULT_MODEL_REF] = {
-    ...models[QIANFAN_DEFAULT_MODEL_REF],
-    alias: models[QIANFAN_DEFAULT_MODEL_REF]?.alias ?? "QIANFAN",
-  };
-  const defaultProvider = buildQianfanProvider();
-  const existingProvider = cfg.models?.providers?.qianfan as
-    | {
-        baseUrl?: unknown;
-        api?: unknown;
-      }
-    | undefined;
-  const existingBaseUrl =
-    typeof existingProvider?.baseUrl === "string" ? existingProvider.baseUrl.trim() : "";
-  const resolvedBaseUrl = existingBaseUrl || QIANFAN_BASE_URL;
-  const resolvedApi =
-    typeof existingProvider?.api === "string"
-      ? (existingProvider.api as ModelApi)
-      : "openai-completions";
-
-  return applyProviderConfigWithDefaultModels(cfg, {
-    agentModels: models,
-    providerId: "qianfan",
-    api: resolvedApi,
-    baseUrl: resolvedBaseUrl,
-    defaultModels: defaultProvider.models ?? [],
-    defaultModelId: QIANFAN_DEFAULT_MODEL_ID,
-  });
-}
-
-export function applyQianfanConfig(cfg: OpenClawConfig): OpenClawConfig {
-  return applyAgentDefaultModelPrimary(applyQianfanProviderConfig(cfg), QIANFAN_DEFAULT_MODEL_REF);
-}
+export const { applyConfig: applyQianfanConfig } = createDefaultModelsConnectionPresetAppliers<[]>({
+  primaryModelRef: QIANFAN_DEFAULT_MODEL_REF,
+  resolveParams: (cfg) => {
+    const existingProvider = cfg.models?.providers?.qianfan;
+    const existingBaseUrl =
+      typeof existingProvider?.baseUrl === "string" ? existingProvider.baseUrl.trim() : "";
+    return {
+      providerId: "qianfan",
+      api: typeof existingProvider?.api === "string" ? existingProvider.api : "openai-completions",
+      baseUrl: existingBaseUrl || QIANFAN_BASE_URL,
+      defaultModels: () => buildQianfanProvider().models,
+      defaultModelId: QIANFAN_DEFAULT_MODEL_ID,
+      aliases: [{ modelRef: QIANFAN_DEFAULT_MODEL_REF, alias: "QIANFAN" }],
+    };
+  },
+});

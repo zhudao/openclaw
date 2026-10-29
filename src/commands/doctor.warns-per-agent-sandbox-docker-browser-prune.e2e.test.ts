@@ -2,89 +2,71 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { createDoctorRuntime, mockDoctorConfigSnapshot, note } from "./doctor.e2e-harness.js";
+import { createDoctorRuntime, mockDoctorConfigSnapshot } from "./doctor.e2e-harness.js";
+import { loadDoctorCommandForTest, terminalNoteMock } from "./doctor.note-test-helpers.js";
 import "./doctor.fast-path-mocks.js";
-
-vi.doUnmock("./doctor-sandbox.js");
 
 let doctorCommand: typeof import("./doctor.js").doctorCommand;
 
 describe("doctor command", () => {
   beforeAll(async () => {
-    ({ doctorCommand } = await import("./doctor.js"));
+    vi.doMock("./doctor-sandbox.js", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("./doctor-sandbox.js")>();
+      return {
+        ...actual,
+        maybeRepairSandboxImages: async (
+          cfg: Parameters<typeof actual.maybeRepairSandboxImages>[0],
+        ) => cfg,
+        maybeRepairSandboxRegistryFiles: async () => {},
+      };
+    });
+    doctorCommand = await loadDoctorCommandForTest({
+      unmockModules: ["../flows/doctor-health-contributions.js"],
+    });
   });
 
   it("warns when per-agent sandbox docker/browser/prune overrides are ignored under shared scope", async () => {
+    const sandbox = { mode: "all", scope: "shared" };
     mockDoctorConfigSnapshot({
       config: {
         agents: {
-          defaults: {
-            sandbox: {
-              mode: "all",
-              scope: "shared",
-            },
+          defaults: { sandbox },
+          entries: {
+            work: { sandbox: { docker: { setupCommand: "echo work" } } },
           },
-          list: [
-            {
-              id: "work",
-              workspace: "~/openclaw-work",
-              sandbox: {
-                mode: "all",
-                scope: "shared",
-                docker: {
-                  setupCommand: "echo work",
-                },
-              },
-            },
-          ],
         },
       },
     });
 
-    note.mockClear();
-
     await doctorCommand(createDoctorRuntime(), { nonInteractive: true });
 
     expect(
-      note.mock.calls.some(([message, title]) => {
-        if (title !== "Sandbox" || typeof message !== "string") {
-          return false;
-        }
-        const normalized = message.replace(/\s+/g, " ").trim();
-        return (
-          normalized.includes('agents.list (id "work") sandbox docker') &&
-          normalized.includes('scope resolves to "shared"')
-        );
-      }),
+      terminalNoteMock.mock.calls.some(
+        ([message, title]) =>
+          title === "Sandbox" &&
+          typeof message === "string" &&
+          /(?=[\s\S]*agents\.entries\.work\s+sandbox\s+docker)(?=[\s\S]*scope\s+resolves\s+to\s+"shared")/.test(
+            message,
+          ),
+      ),
     ).toBe(true);
   }, 30_000);
 
   it("does not warn when only the active workspace is present", async () => {
-    mockDoctorConfigSnapshot({
-      config: {
-        agents: { defaults: { workspace: "/Users/steipete/openclaw" } },
-      },
-    });
-
-    note.mockClear();
+    const workspace = "/Users/steipete/openclaw";
+    mockDoctorConfigSnapshot({ config: { agents: { defaults: { workspace } } } });
     const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue("/Users/steipete");
     const realExists = fs.existsSync;
-    const legacyPath = path.join("/Users/steipete", "openclaw");
-    const legacyAgentsPath = path.join(legacyPath, "AGENTS.md");
-    const existsSpy = vi.spyOn(fs, "existsSync").mockImplementation((value) => {
-      if (
-        value === "/Users/steipete/openclaw" ||
-        value === legacyPath ||
-        value === legacyAgentsPath
-      ) {
-        return true;
-      }
-      return realExists(value as never);
-    });
+    const existsSpy = vi
+      .spyOn(fs, "existsSync")
+      .mockImplementation(
+        (value) =>
+          value === workspace || value === path.join(workspace, "AGENTS.md") || realExists(value),
+      );
 
     await doctorCommand(createDoctorRuntime(), { nonInteractive: true });
 
-    expect(note.mock.calls.some(([_, title]) => title === "Extra workspace")).toBe(false);
+    expect(terminalNoteMock.mock.calls.map(([, title]) => title)).not.toContain("Extra workspace");
 
     homedirSpy.mockRestore();
     existsSpy.mockRestore();

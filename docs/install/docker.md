@@ -1,844 +1,626 @@
 ---
 summary: "Optional Docker-based setup and onboarding for OpenClaw"
 read_when:
-  - You want a containerized gateway instead of local installs
+  - You want a containerized Gateway instead of local installs
   - You are validating the Docker flow
+  - You are migrating from ClawDock shell helpers
 title: "Docker"
 ---
 
-# Docker (optional)
+Docker is **optional**. Use it for an isolated, throwaway Gateway environment or a host without local installs. If you already develop on your own machine, use the normal install flow instead.
 
-Docker is **optional**. Use it only if you want a containerized gateway or to validate the Docker flow.
+The default Docker sandbox backend uses only the `docker` CLI. Set the backend to `"podman"` to select native Podman directly. Sandboxing is off by default and does not require the Gateway itself to run in a container. SSH and OpenShell sandbox backends are also available; see [Sandboxing](/gateway/sandboxing).
 
-## Is Docker right for me?
+Hosting mutually untrusted users? Run a separate Gateway for each trust boundary, ideally under separate OS users or hosts. See [Security trust model](/gateway/security/trust-model).
 
-- **Yes**: you want an isolated, throwaway gateway environment or to run OpenClaw on a host without local installs.
-- **No**: you’re running on your own machine and just want the fastest dev loop. Use the normal install flow instead.
-- **Sandboxing note**: agent sandboxing uses Docker too, but it does **not** require the full gateway to run in Docker. See [Sandboxing](/gateway/sandboxing).
-
-This guide covers:
-
-- Containerized Gateway (full OpenClaw in Docker)
-- Per-session Agent Sandbox (host gateway + Docker-isolated agent tools)
-
-Sandboxing details: [Sandboxing](/gateway/sandboxing)
-
-## Requirements
+## Prerequisites
 
 - Docker Desktop (or Docker Engine) + Docker Compose v2
-- At least 2 GB RAM for image build (`pnpm install` may be OOM-killed on 1 GB hosts with exit 137)
-- Enough disk for images + logs
-- If running on a VPS/public host, review
-  [Security hardening for network exposure](/gateway/security#04-network-exposure-bind--port--firewall),
-  especially Docker `DOCKER-USER` firewall policy.
+- At least 6 GB RAM for a local source image build; pre-built images avoid this build requirement
+- Enough disk for images and logs
+- On a VPS/public host, review [Security hardening for network exposure](/gateway/security), especially the Docker `DOCKER-USER` firewall chain
 
-## Containerized Gateway (Docker Compose)
+## Containerized Gateway
 
-### Quick start (recommended)
+<Steps>
+  <Step title="Build the image">
+    From the repo root:
 
-<Note>
-Docker defaults here assume bind modes (`lan`/`loopback`), not host aliases. Use bind
-mode values in `gateway.bind` (for example `lan` or `loopback`), not host aliases like
-`0.0.0.0` or `localhost`.
-</Note>
+    ```bash
+    ./scripts/docker/setup.sh
+    ```
 
-From repo root:
+    This builds the Gateway image locally as `openclaw:local`. To use a pre-built image instead:
+
+    ```bash
+    export OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:latest"
+    ./scripts/docker/setup.sh
+    ```
+
+    Pre-built images are published first to the [GitHub Container Registry](https://github.com/openclaw/openclaw/pkgs/container/openclaw). GHCR is the primary registry for release automation, pinned deployments, and provenance checks. The same release publishes a Docker Hub mirror at `openclaw/openclaw`:
+
+    ```bash
+    export OPENCLAW_IMAGE="openclaw/openclaw:latest"
+    ./scripts/docker/setup.sh
+    ```
+
+    Use `ghcr.io/openclaw/openclaw` or `openclaw/openclaw` and avoid unofficial mirrors, which don't share OpenClaw's release timing or retention policy. Version-specific tags include releases such as `2026.9.3` and prereleases such as `2026.9.1-beta.1`. Stable releases move `latest` and `main`; trailing-month Gateway releases move only `extended-stable`. Variants include `slim`, `main-slim`, `extended-stable-slim`, `latest-browser`, `main-browser`, and `extended-stable-browser`. The default images bundle the `codex` and `diagnostics-otel` plugins. A `-browser` variant also ships with Chromium baked in for the [Gateway-controlled browser](/install/docker#using-the-control-ui-browser). The agent sandbox browser uses a separate image.
+
+  </Step>
+
+  <Step title="Airgapped rerun">
+    On offline hosts, transfer and load the image first:
+
+    ```bash
+    docker load -i openclaw-image.tar
+    export OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:latest"
+    ./scripts/docker/setup.sh --offline
+    ```
+
+    `--offline` verifies `OPENCLAW_IMAGE` already exists locally, disables implicit Compose pulls/builds, then runs the normal flow: `.env` sync, permission fixes, onboarding, Gateway config sync, Compose startup.
+
+    If `OPENCLAW_SANDBOX=1`, offline setup also checks the configured default and per-agent sandbox images on the daemon behind `OPENCLAW_DOCKER_SOCKET`, including the browser-contract label on Docker-backed browser images. If a required image is missing or stale, setup exits without changing sandbox config rather than reporting a broken success.
+
+  </Step>
+
+  <Step title="Complete onboarding">
+    The setup script runs onboarding automatically:
+
+    - prompts for provider API keys
+    - generates a Gateway token and writes it to `.env`
+    - creates the legacy auth-profile secret key directory
+    - starts the Gateway via Docker Compose
+
+    Pre-start onboarding and config writes run through `openclaw-gateway` directly (with `--no-deps --entrypoint node`), since `openclaw-cli` shares the Gateway's network namespace and only works once the Gateway container exists.
+
+  </Step>
+
+  <Step title="Open the Control UI">
+    Open `http://127.0.0.1:18789/` and paste the token written to `.env` into Settings. If you switched the container to password auth, use that password instead.
+
+    Need the URL again?
+
+    ```bash
+    docker compose run --rm openclaw-cli dashboard --no-open
+    ```
+
+    With a custom `OPENCLAW_GATEWAY_PORT`, replace port `18789` in the printed URL with your host port before opening it in the browser; keep the rest of the URL intact. Dashboard commands inside either container use the internal listener port.
+
+  </Step>
+
+  <Step title="Configure channels (optional)">
+    ```bash
+    # WhatsApp (QR)
+    docker compose run --rm openclaw-cli channels login
+
+    # Telegram
+    docker compose run --rm openclaw-cli channels add --channel telegram --token "<token>"
+
+    # Discord
+    docker compose run --rm openclaw-cli channels add --channel discord --token "<token>"
+    ```
+
+    Docs: [WhatsApp](/channels/whatsapp), [Telegram](/channels/telegram), [Discord](/channels/discord)
+
+  </Step>
+</Steps>
+
+### Using the Control UI browser
+
+The [Control UI Browser panel](/web/control-ui/panels#browser-panel) displays a
+browser controlled by the Gateway. It is separate from the browser on your laptop
+or phone that opens the dashboard. For a local managed browser with a Docker
+Gateway, Chromium must be available **inside the Gateway container**.
+
+For a new installation, use the official browser-equipped image with the normal
+Compose setup; no custom Dockerfile is needed:
 
 ```bash
-./docker-setup.sh
+export OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:latest-browser"
+./scripts/docker/setup.sh
 ```
 
-This script:
-
-- builds the gateway image locally (or pulls a remote image if `OPENCLAW_IMAGE` is set)
-- runs onboarding
-- prints optional provider setup hints
-- starts the gateway via Docker Compose
-- generates a gateway token and writes it to `.env`
-
-Optional env vars:
-
-- `OPENCLAW_IMAGE` — use a remote image instead of building locally (e.g. `ghcr.io/openclaw/openclaw:latest`)
-- `OPENCLAW_DOCKER_APT_PACKAGES` — install extra apt packages during build
-- `OPENCLAW_EXTENSIONS` — pre-install extension dependencies at build time (space-separated extension names, e.g. `diagnostics-otel matrix`)
-- `OPENCLAW_EXTRA_MOUNTS` — add extra host bind mounts
-- `OPENCLAW_HOME_VOLUME` — persist `/home/node` in a named volume
-- `OPENCLAW_SANDBOX` — opt in to Docker gateway sandbox bootstrap. Only explicit truthy values enable it: `1`, `true`, `yes`, `on`
-- `OPENCLAW_INSTALL_DOCKER_CLI` — build arg passthrough for local image builds (`1` installs Docker CLI in the image). `docker-setup.sh` sets this automatically when `OPENCLAW_SANDBOX=1` for local builds.
-- `OPENCLAW_DOCKER_SOCKET` — override Docker socket path (default: `DOCKER_HOST=unix://...` path, else `/var/run/docker.sock`)
-- `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1` — break-glass: allow trusted private-network
-  `ws://` targets for CLI/onboarding client paths (default is loopback-only)
-- `OPENCLAW_BROWSER_DISABLE_GRAPHICS_FLAGS=0` — disable container browser hardening flags
-  `--disable-3d-apis`, `--disable-software-rasterizer`, `--disable-gpu` when you need
-  WebGL/3D compatibility.
-- `OPENCLAW_BROWSER_DISABLE_EXTENSIONS=0` — keep extensions enabled when browser
-  flows require them (default keeps extensions disabled in sandbox browser).
-- `OPENCLAW_BROWSER_RENDERER_PROCESS_LIMIT=<N>` — set Chromium renderer process
-  limit; set to `0` to skip the flag and use Chromium default behavior.
-
-After it finishes:
-
-- Open `http://127.0.0.1:18789/` in your browser.
-- Paste the token into the Control UI (Settings → token).
-- Need the URL again? Run `docker compose run --rm openclaw-cli dashboard --no-open`.
-
-### Enable agent sandbox for Docker gateway (opt-in)
-
-`docker-setup.sh` can also bootstrap `agents.defaults.sandbox.*` for Docker
-deployments.
-
-Enable with:
+For a pinned deployment, choose a release's `-browser` tag instead of the moving
+`latest-browser` tag. For an existing Compose installation, change `OPENCLAW_IMAGE`
+in its `.env` to the browser variant, then pull and recreate the Gateway using
+the same Compose files and overlays as your current deployment:
 
 ```bash
-export OPENCLAW_SANDBOX=1
-./docker-setup.sh
-```
-
-Custom socket path (for example rootless Docker):
-
-```bash
-export OPENCLAW_SANDBOX=1
-export OPENCLAW_DOCKER_SOCKET=/run/user/1000/docker.sock
-./docker-setup.sh
-```
-
-Notes:
-
-- The script mounts `docker.sock` only after sandbox prerequisites pass.
-- If sandbox setup cannot be completed, the script resets
-  `agents.defaults.sandbox.mode` to `off` to avoid stale/broken sandbox config
-  on reruns.
-- If `Dockerfile.sandbox` is missing, the script prints a warning and continues;
-  build `openclaw-sandbox:bookworm-slim` with `scripts/sandbox-setup.sh` if
-  needed.
-- For non-local `OPENCLAW_IMAGE` values, the image must already contain Docker
-  CLI support for sandbox execution.
-
-### Automation/CI (non-interactive, no TTY noise)
-
-For scripts and CI, disable Compose pseudo-TTY allocation with `-T`:
-
-```bash
-docker compose run -T --rm openclaw-cli gateway probe
-docker compose run -T --rm openclaw-cli devices list --json
-```
-
-If your automation exports no Claude session vars, leaving them unset now resolves to
-empty values by default in `docker-compose.yml` to avoid repeated "variable is not set"
-warnings.
-
-### Shared-network security note (CLI + gateway)
-
-`openclaw-cli` uses `network_mode: "service:openclaw-gateway"` so CLI commands can
-reliably reach the gateway over `127.0.0.1` in Docker.
-
-Treat this as a shared trust boundary: loopback binding is not isolation between these two
-containers. If you need stronger separation, run commands from a separate container/host
-network path instead of the bundled `openclaw-cli` service.
-
-To reduce impact if the CLI process is compromised, the compose config drops
-`NET_RAW`/`NET_ADMIN` and enables `no-new-privileges` on `openclaw-cli`.
-
-It writes config/workspace on the host:
-
-- `~/.openclaw/`
-- `~/.openclaw/workspace`
-
-Running on a VPS? See [Hetzner (Docker VPS)](/install/hetzner).
-
-### Use a remote image (skip local build)
-
-Official pre-built images are published at:
-
-- [GitHub Container Registry package](https://github.com/openclaw/openclaw/pkgs/container/openclaw)
-
-Use image name `ghcr.io/openclaw/openclaw` (not similarly named Docker Hub
-images).
-
-Common tags:
-
-- `main` — latest build from `main`
-- `<version>` — release tag builds (for example `2026.2.26`)
-- `latest` — latest stable release tag
-
-### Base image metadata
-
-The main Docker image currently uses:
-
-- `node:24-bookworm`
-
-The docker image now publishes OCI base-image annotations (sha256 is an example,
-and points at the pinned multi-arch manifest list for that tag):
-
-- `org.opencontainers.image.base.name=docker.io/library/node:24-bookworm`
-- `org.opencontainers.image.base.digest=sha256:3a09aa6354567619221ef6c45a5051b671f953f0a1924d1f819ffb236e520e6b`
-- `org.opencontainers.image.source=https://github.com/openclaw/openclaw`
-- `org.opencontainers.image.url=https://openclaw.ai`
-- `org.opencontainers.image.documentation=https://docs.openclaw.ai/install/docker`
-- `org.opencontainers.image.licenses=MIT`
-- `org.opencontainers.image.title=OpenClaw`
-- `org.opencontainers.image.description=OpenClaw gateway and CLI runtime container image`
-- `org.opencontainers.image.revision=<git-sha>`
-- `org.opencontainers.image.version=<tag-or-main>`
-- `org.opencontainers.image.created=<rfc3339 timestamp>`
-
-Reference: [OCI image annotations](https://github.com/opencontainers/image-spec/blob/main/annotations.md)
-
-Release context: this repository's tagged history already uses Bookworm in
-`v2026.2.22` and earlier 2026 tags (for example `v2026.2.21`, `v2026.2.9`).
-
-By default the setup script builds the image from source. To pull a pre-built
-image instead, set `OPENCLAW_IMAGE` before running the script:
-
-```bash
-export OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:latest"
-./docker-setup.sh
-```
-
-The script detects that `OPENCLAW_IMAGE` is not the default `openclaw:local` and
-runs `docker pull` instead of `docker build`. Everything else (onboarding,
-gateway start, token generation) works the same way.
-
-`docker-setup.sh` still runs from the repository root because it uses the local
-`docker-compose.yml` and helper files. `OPENCLAW_IMAGE` skips local image build
-time; it does not replace the compose/setup workflow.
-
-### Shell Helpers (optional)
-
-For easier day-to-day Docker management, install `ClawDock`:
-
-```bash
-mkdir -p ~/.clawdock && curl -sL https://raw.githubusercontent.com/openclaw/openclaw/main/scripts/shell-helpers/clawdock-helpers.sh -o ~/.clawdock/clawdock-helpers.sh
-```
-
-**Add to your shell config (zsh):**
-
-```bash
-echo 'source ~/.clawdock/clawdock-helpers.sh' >> ~/.zshrc && source ~/.zshrc
-```
-
-Then use `clawdock-start`, `clawdock-stop`, `clawdock-dashboard`, etc. Run `clawdock-help` for all commands.
-
-See [`ClawDock` Helper README](https://github.com/openclaw/openclaw/blob/main/scripts/shell-helpers/README.md) for details.
-
-### Manual flow (compose)
-
-```bash
-docker build -t openclaw:local -f Dockerfile .
-docker compose run --rm openclaw-cli onboard
+docker compose pull openclaw-gateway openclaw-cli
+docker compose stop openclaw-gateway
 docker compose up -d openclaw-gateway
 ```
 
-Note: run `docker compose ...` from the repo root. If you enabled
-`OPENCLAW_EXTRA_MOUNTS` or `OPENCLAW_HOME_VOLUME`, the setup script writes
-`docker-compose.extra.yml`; include it when running Compose elsewhere:
+Keep your existing volumes, ports, and other settings. Do not rerun setup with an
+empty shell environment to change only the image: setup rewrites `.env` from the
+current shell and defaults.
+
+An existing home volume or bind mount covering `/home/node/.cache/ms-playwright`
+can hide the image's bundled Chromium. If browser discovery still fails after the
+image switch, check those mounts. Preserve the data, then either provision
+Chromium in the mounted home or adjust the mounts to leave the image's browser
+cache visible; recreating the container does not refresh a populated home volume.
+
+For a new installation from a local source build, bake Chromium into the image:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.extra.yml <command>
+OPENCLAW_IMAGE=openclaw:local OPENCLAW_INSTALL_BROWSER=1 ./scripts/docker/setup.sh
 ```
 
-### Control UI token + pairing (Docker)
-
-If you see “unauthorized” or “disconnected (1008): pairing required”, fetch a
-fresh dashboard link and approve the browser device:
+`OPENCLAW_INSTALL_BROWSER=1` installs full Chromium and headless shell, preserving
+existing Playwright scripts that use default headless launches. Choose `chromium`
+to install only full Chromium, or `headless-shell` for a smaller, headless-only image:
 
 ```bash
-docker compose run --rm openclaw-cli dashboard --no-open
-docker compose run --rm openclaw-cli devices list
-docker compose run --rm openclaw-cli devices approve <requestId>
+OPENCLAW_IMAGE=openclaw:local OPENCLAW_INSTALL_BROWSER=headless-shell ./scripts/docker/setup.sh
 ```
 
-More detail: [Dashboard](/web/dashboard), [Devices](/cli/devices).
+All modes use the repository-pinned Playwright installer, including its system
+libraries, fonts, and FFmpeg helper. Empty or `0` omits the browser. These are
+build-time choices; setting them on an already-built container does not install
+or replace a browser. Headless shell cannot provide a headed browser window or
+Chrome extensions. Keep full Chromium for those workflows and validate your sites
+before switching. Neither browser distribution is MIT-only; inventory the actual
+image and preserve all third-party license notices.
 
-### Extra mounts (optional)
-
-If you want to mount additional host directories into the containers, set
-`OPENCLAW_EXTRA_MOUNTS` before running `docker-setup.sh`. This accepts a
-comma-separated list of Docker bind mounts and applies them to both
-`openclaw-gateway` and `openclaw-cli` by generating `docker-compose.extra.yml`.
-
-Example:
+OpenClaw automatically discovers full Chromium only. A `headless-shell` image
+requires an explicit shell executable path on a separate managed profile. Find
+the installed path inside the container (the revision directory changes with
+Playwright updates):
 
 ```bash
-export OPENCLAW_EXTRA_MOUNTS="$HOME/.codex:/home/node/.codex:ro,$HOME/github:/home/node/github:rw"
-./docker-setup.sh
+find /home/node/.cache/ms-playwright -type f -name chrome-headless-shell
 ```
 
-Notes:
+Set `browser.profiles.shell.executablePath` to that path, give the profile its own
+`cdpPort`, and keep it headless. Select that profile when starting the browser.
+Do not reuse an existing full Chromium profile: switching distributions can
+discard localStorage. See [Browser configuration](/tools/browser/configuration).
 
-- Paths must be shared with Docker Desktop on macOS/Windows.
-- Each entry must be `source:target[:options]` with no spaces, tabs, or newlines.
-- If you edit `OPENCLAW_EXTRA_MOUNTS`, rerun `docker-setup.sh` to regenerate the
-  extra compose file.
-- `docker-compose.extra.yml` is generated. Don’t hand-edit it.
+With the explicit `chromium` mode,
+your own Playwright scripts must use `channel: "chromium"` for headless launches;
+Playwright's default headless launch expects the separate shell binary. Keep `1`
+to retain both binaries without changing existing scripts.
+The bundled Diffs PNG/PDF renderer supports all image modes. After explicit and
+system-browser choices, it selects Playwright's full Chromium when installed and
+otherwise retains Playwright's default headless-shell selection.
 
-### Persist the entire container home (optional)
+The image supplies Chromium, not a replacement for your browser configuration:
 
-If you want `/home/node` to persist across container recreation, set a named
-volume via `OPENCLAW_HOME_VOLUME`. This creates a Docker volume and mounts it at
-`/home/node`, while keeping the standard config/workspace bind mounts. Use a
-named volume here (not a bind path); for bind mounts, use
-`OPENCLAW_EXTRA_MOUNTS`.
+- Keep browser control enabled (`browser.enabled`). Use a local managed profile
+  such as `openclaw` for the container's Chromium, not an extension, attach-only,
+  or remote-CDP profile intended for another browser.
+- OpenClaw auto-detects the image's Playwright-managed Chromium on Linux. An
+  explicit `browser.executablePath` or profile executable path must point to a
+  binary inside the container; a path from your laptop will not work there.
+- Managed browsers run headless by default. Check explicit
+  `browser.headless`, profile headless settings, and `OPENCLAW_BROWSER_HEADLESS`
+  overrides if startup reports a missing display. See [Browser configuration](/tools/browser-control).
+- Connect with `operator.admin` access to a Gateway advertising `browser.request`.
+  Open **+ → Browser** in the Chat side panel, navigate to a page, and confirm that
+  its snapshot loads and navigation works. Loading the dashboard alone does not
+  verify that Chromium can start.
 
-Example:
+This is not the separate [sandboxed browser](/gateway/sandboxing#sandboxed-browser)
+container used by sandboxed agent sessions. Selecting a Gateway `-browser` image
+does not build or configure that sandbox image.
+
+### Headless bootstrap
+
+For an unattended container host, put provider, Gateway, and channel credentials in the Compose `.env` file so both the one-shot bootstrap container and the long-running Gateway receive the same values:
 
 ```bash
-export OPENCLAW_HOME_VOLUME="openclaw_home"
-./docker-setup.sh
+OPENAI_API_KEY=<provider-key>
+OPENCLAW_GATEWAY_TOKEN=<gateway-token>
+TELEGRAM_BOT_TOKEN=<bot-token>
 ```
 
-You can combine this with extra mounts:
+Run onboarding and channel provisioning without a pseudo-TTY, then start the Gateway:
 
 ```bash
-export OPENCLAW_HOME_VOLUME="openclaw_home"
-export OPENCLAW_EXTRA_MOUNTS="$HOME/.codex:/home/node/.codex:ro,$HOME/github:/home/node/github:rw"
-./docker-setup.sh
+docker compose run -T --rm --no-deps --entrypoint node openclaw-gateway \
+  dist/index.js onboard --non-interactive --accept-risk --skip-health \
+  --mode local \
+  --auth-choice openai-api-key \
+  --secret-input-mode ref \
+  --gateway-auth token \
+  --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN \
+  --skip-channels \
+  --no-install-daemon
+docker compose run -T --rm --no-deps --entrypoint node openclaw-gateway \
+  dist/index.js channels add --channel telegram --use-env
+docker compose up -d openclaw-gateway
 ```
 
-Notes:
+The channel command fails before changing config if a plugin-declared environment variable is missing. Keep `TELEGRAM_BOT_TOKEN` in `.env` after bootstrap: `--use-env` leaves credential lookup to the environment without copying the token into `openclaw.json`, and the running Gateway needs the same variable. When channel config changes after startup, the Gateway's config watcher hot-reloads the affected channel automatically.
 
-- Named volumes must match `^[A-Za-z0-9][A-Za-z0-9_.-]*$`.
-- If you change `OPENCLAW_HOME_VOLUME`, rerun `docker-setup.sh` to regenerate the
-  extra compose file.
-- The named volume persists until removed with `docker volume rm <name>`.
+See [`openclaw channels`](/cli/channels) for credential-flag alternatives and other channel plugins.
 
-### Install extra apt packages (optional)
-
-If you need system packages inside the image (for example, build tools or media
-libraries), set `OPENCLAW_DOCKER_APT_PACKAGES` before running `docker-setup.sh`.
-This installs the packages during the image build, so they persist even if the
-container is deleted.
-
-Example:
+### Manual flow
 
 ```bash
-export OPENCLAW_DOCKER_APT_PACKAGES="ffmpeg build-essential"
-./docker-setup.sh
+BUILD_GIT_COMMIT="$(git rev-parse HEAD)"
+BUILD_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+docker build \
+  --build-arg "GIT_COMMIT=${BUILD_GIT_COMMIT}" \
+  --build-arg "OPENCLAW_BUILD_TIMESTAMP=${BUILD_TIMESTAMP}" \
+  -t openclaw:local -f Dockerfile .
+docker compose run --rm --no-deps --entrypoint node openclaw-gateway \
+  dist/index.js onboard --mode local --no-install-daemon
+docker compose run --rm --no-deps --entrypoint node openclaw-gateway \
+  dist/index.js config set --batch-json '[{"path":"gateway.mode","value":"local"},{"path":"gateway.bind","value":"lan"},{"path":"gateway.controlUi.allowedOrigins","value":["http://localhost:18789","http://127.0.0.1:18789"]}]'
+docker compose up -d openclaw-gateway
 ```
 
-Notes:
+The Docker context excludes `.git`. Pass the source identity as build arguments
+as shown above so the image's About screen reports the checked-out commit and
+one build timestamp. `scripts/docker/setup.sh` resolves and passes both values
+automatically.
 
-- This accepts a space-separated list of apt package names.
-- If you change `OPENCLAW_DOCKER_APT_PACKAGES`, rerun `docker-setup.sh` to rebuild
-  the image.
+<Note>
+Run `docker compose` from the repo root. If you enabled `OPENCLAW_EXTRA_MOUNTS` or `OPENCLAW_HOME_VOLUME`, the setup script writes `docker-compose.extra.yml`; include it after any `docker-compose.override.yml` you maintain yourself, e.g. `-f docker-compose.yml -f docker-compose.override.yml -f docker-compose.extra.yml`.
+</Note>
 
-### Pre-install extension dependencies (optional)
+### Upgrading container images
 
-Extensions with their own `package.json` (e.g. `diagnostics-otel`, `matrix`,
-`msteams`) install their npm dependencies on first load. To bake those
-dependencies into the image instead, set `OPENCLAW_EXTENSIONS` before
-running `docker-setup.sh`:
+When you replace the OpenClaw image but keep the same mounted state/config, the
+image entrypoint runs `openclaw doctor --fix --non-interactive` under exclusive
+maintenance ownership before starting the Gateway. This covers the default image
+command and Compose's foreground Gateway command, including its selected profile.
+Routine image upgrades do not require a separate Doctor pass.
+
+Keep one Gateway replica per state volume, and stop the old container before
+starting its replacement. The startup repair needs exclusive maintenance
+ownership of that state; an overlapping Gateway can prevent it from completing.
+For Compose, use the same files and overlays as your running deployment:
 
 ```bash
-export OPENCLAW_EXTENSIONS="diagnostics-otel matrix"
-./docker-setup.sh
+docker compose pull openclaw-gateway openclaw-cli
+docker compose stop openclaw-gateway
+docker compose up -d openclaw-gateway
 ```
 
-Or when building directly:
+In Docker Swarm, keep `replicas: 1` and use `update_config.order: stop-first` and
+`rollback_config.order: stop-first`. In Kubernetes, keep `replicas: 1` and use a
+`Recreate` Deployment strategy, as the [provided manifest](/install/kubernetes)
+does. A shared volume is not a way to scale Gateway replicas. Back up the state
+before upgrading; see [Backups](/install/backups).
+
+Activation retains a full pre-repair copy of local state under
+`<state-dir>.update-captures/` the first time Doctor captures in a container.
+Later starts of the same container (`docker stop`/`docker start`, restart
+policies, host reboots) still run the Doctor repair pass but skip that repeated
+full copy, keep it, and still retire other Doctor copies older than 30 days;
+repair-specific backups still apply. If a capture fails, the next
+start tries again. A new image, a recreated container, or a container whose
+`/tmp` does not persist across restarts captures again.
+
+### Read-only container root
+
+A read-only container root still needs writable runtime storage. For example,
+with `HOME=/state` and `OPENCLAW_STATE_DIR=/state`, provide these mounts:
+
+| Path                                                                   | Purpose                                                                                                  | Storage                             |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `/state`                                                               | SQLite databases and sidecars, credentials, and state ownership locks under `/state/tmp/openclaw-<uid>/` | Persistent writable volume          |
+| Configured workspace directories, such as `/workspace`                 | Agent files and workspace migrations                                                                     | Persistent writable volume          |
+| `/state/.cache` or the absolute directory selected by `XDG_CACHE_HOME` | Private SQLite snapshot staging                                                                          | Writable volume or tmpfs            |
+| `/tmp`                                                                 | Runtime temporary files and the container activation marker                                              | Writable tmpfs                      |
+| `/state.update-captures`                                               | Retained pre-repair state captures                                                                       | Separate persistent writable volume |
+
+Set ownership so the container's UID/GID can create files and directories in each
+writable location. Database files and their parent directories must be writable;
+mounting only the database file writable is insufficient for SQLite sidecars.
+Configured plugin storage or other file outputs may need additional mounts.
+See [Gateway lock](/gateway/gateway-lock#state-and-config-locks) for the lock paths.
+`TMPDIR` does not relocate state ownership locks.
+
+The capture path is a sibling of the resolved state directory, not a child. A
+writable `/state` therefore does not make `/state.update-captures` writable. If
+that sibling is unavailable, standalone Doctor reports that the original state
+capture was unavailable and continues. This warning does not identify the cause
+of a later fatal filesystem error. Keep the capture volume private: it contains
+raw pre-repair state and credentials, and is excluded from normal backups and
+support exports.
+
+For a read-only config bind such as `/run/config/openclaw.json`, set
+`OPENCLAW_CONFIG_PATH=/run/config/openclaw.json` and
+`OPENCLAW_CONFIG_READONLY=1` in both the Gateway and CLI container environments.
+Doctor can still repair writable state, but config repairs must be applied in
+your external deployment source. Invalid or legacy config that blocks startup
+must be migrated there before restarting. See
+[Externally managed config](/cli/config#externally-managed-config).
+
+If startup reports `EROFS`, inspect the path and operation in the error and check
+that its mount is writable. Changing file modes cannot make a read-only mount
+writable. Do not delete state or lock files to repair a mount error, and do not
+disable native filesystem checks.
+
+On older Linux hosts such as Synology DSM, an unavailable `openat2` syscall can
+make older images report that another Gateway owns even an empty state volume.
+Current images use the guarded filesystem fallback; keep native filesystem
+checks enabled. Doctor reports the underlying lock failure and recovery action
+instead of treating every acquisition error as an active Gateway. Permission
+errors require a writable state mount for the container user. If the filesystem
+cannot provide exclusive file creation for state ownership, stop OpenClaw, back
+up its state, and move the state volume to a local filesystem that supports it.
+Ordinary database transactions use SQLite locking on that volume. Do not delete
+state or lock files to bypass ownership.
+
+Other CLI commands and help pass through unchanged. If you replace the image's
+entrypoint, run Doctor against the same mounted state/config before launching the
+Gateway; a custom entrypoint bypasses this activation step.
+
+This includes agent database schema upgrades, shared-state audit migrations, and
+legacy workspace setup imports. Before advancing database schemas, Doctor saves
+verified SQLite copies beside the originals as
+`<database>.pre-startup-migration-<id>.bak`. Fully declared table migrations may
+instead use `.scoped.bak` archives; restore those with
+`openclaw database restore-migration-backup`, never by replacing the database file.
+See [declared migration scopes](/reference/database-schemas/versioning#declared-migration-backup-scopes).
+The shared database and affected agent
+databases use the same backup ID. Config backups and retired workspace-file
+archives follow the normal Doctor repair rules. Keep these files with your
+pre-upgrade backup; a rollback must restore the matching state as well as the old
+image. See [rollback](/install/updating#rollback).
+
+Retries with the same candidate build, database files, and target schemas verify and reuse the
+first completed backup group for the full database inventory, including after a
+partially completed migration. A temporary `.bak.capturing` file records an
+unfinished capture and is durably removed before migration starts. An interrupted
+capture is recaptured; a missing or damaged member of a completed group stops
+migration and preserves the surviving snapshots for recovery. Repeated
+failed attempts therefore do not create another full backup group each time.
+Older backup groups remain available for operator-managed rollback.
+Doctor records these originals for `openclaw update cleanup --dry-run`. They stay
+protected until Doctor verifies that the migration completed and a later update
+finishes successfully. Cleanup can then retire the recorded group after your
+confirmation. Older unrecorded `.bak` files are listed as protected. Keep these
+files with your pre-upgrade backups while you still need the matching rollback.
+
+On FUSE filesystems such as Unraid's `shfs`, a missing native no-replace rename
+does not require an operator step in native `auto` mode when same-directory
+hardlinks are supported. fs-safe preserves the source inode and bytes through
+exclusive hardlink publication and unlink. Native `require` mode still refuses
+the unsupported primitive. Doctor recovers interrupted source/claim pairs without
+replacing another file. Its separate missing-addon/native-off compatibility path
+syncs the source and directory before removing the old name; native moves do not
+promise per-move crash durability. Archive hardening and durable recovery
+checkpoints remain owned by Doctor.
+SQLite backup verification rechecks snapshot bytes when FUSE modification or change timestamps drift, while still rejecting changed contents or file identities.
+
+Readiness remains false while the default or system agent database is refused,
+and the readiness response includes the admission reason. A refused optional
+agent remains isolated while healthy agents can serve requests.
+
+Missing or drifted required SQLite indexes are rebuilt by the schema migration
+owner before session startup completes. Repair warnings identify the agent,
+database path, rebuilt indexes, and elapsed time. Current-schema shape refusal
+reports list all affected databases in stable path order. Missing required tables,
+incompatible columns, and other changes that cannot be reconstructed safely still require Doctor; startup
+does not recreate a missing data table as an empty one.
+
+On Linux hosts without file creation timestamps, normal SQLite writes and
+permission repairs can change the reported file birth time. These changes do
+not invalidate the open database; actual file replacement still stops admission.
+
+Startup exits with code `78` when required state cannot be migrated safely:
+for example, source identities conflict, data is unreadable, another writer owns
+the state, or the filesystem provides no safe, durable way to publish a claim.
+The retained source, claim, and backups are recovery inputs; do not delete them to
+silence the error. If the filesystem lacks the required primitives, stop the
+Gateway and expose the same data through its native backing filesystem before
+retrying (for example, an Unraid pool path instead of the `shfs` share).
+
+With a restart policy, Docker, Podman, or Kubernetes may show
+the Gateway container restarting. Keep the mounted state volume, then run the
+same image once with `openclaw doctor --fix` as the container command, using the
+same state/config mounts the Gateway uses:
 
 ```bash
-docker build --build-arg OPENCLAW_EXTENSIONS="diagnostics-otel matrix" .
+docker run --rm -v <openclaw-state>:/home/node/.openclaw <image> openclaw doctor --fix
+podman run --rm -v <openclaw-state>:/home/node/.openclaw <image> openclaw doctor --fix
 ```
 
-Notes:
+After doctor finishes, restart the Gateway container with its default command.
+In Kubernetes, run the same command in a one-off Job or debug pod mounted to the
+same PVC. First scale the Gateway workload to zero and wait for its pods to
+terminate; in Swarm, scale the Gateway service to zero and wait for its tasks to
+stop. Keep the workload stopped until Doctor finishes, then restore one replica.
+If ownership is still refused after the old container has stopped, follow
+[Gateway lock recovery](/gateway/gateway-lock#recover-a-crashed-foreign-owner).
+Do not delete lock files or repeatedly restart competing containers.
 
-- This accepts a space-separated list of extension directory names (under `extensions/`).
-- Only extensions with a `package.json` are affected; lightweight plugins without one are ignored.
-- If you change `OPENCLAW_EXTENSIONS`, rerun `docker-setup.sh` to rebuild
-  the image.
-
-### Power-user / full-featured container (opt-in)
-
-The default Docker image is **security-first** and runs as the non-root `node`
-user. This keeps the attack surface small, but it means:
-
-- no system package installs at runtime
-- no Homebrew by default
-- no bundled Chromium/Playwright browsers
-
-If you want a more full-featured container, use these opt-in knobs:
-
-1. **Persist `/home/node`** so browser downloads and tool caches survive:
+After the container is running again, run the read-only deployment preflight
+against the same mounted state:
 
 ```bash
-export OPENCLAW_HOME_VOLUME="openclaw_home"
-./docker-setup.sh
+docker compose run --rm openclaw-cli doctor --json
 ```
 
-2. **Bake system deps into the image** (repeatable + persistent):
+### Source-built images with selected plugins
+
+`OPENCLAW_EXTENSIONS` selects plugin manifest ids from the source checkout;
+existing source-directory names are also accepted when they differ. The Docker
+build resolves the selection to source directories once, installs production
+dependencies, links each selected plugin's own runtime dependencies under its
+packaged root in `/app/dist/extensions/<id>`, and includes the selected plugin
+runtime in the image. Source checkouts also compile first-party plugins
+published separately with
+`openclaw.build.bundledDist: false`; that marker still preserves the plugin's
+external npm or ClawHub ownership and does not change either artifact contract.
+Unknown, invalid, or ambiguous ids fail the image build.
+Custom package builds using `scripts/package-openclaw-for-docker.mjs --bundle-plugin`
+retain each selected plugin's declared npm bundles from its own installation,
+including their installed runtime dependencies and local patches. Packaging does
+not change the checkout's dependency links or shared package store.
+
+After the frozen production install, Docker also composes the selected plugins'
+exact production and optional pins into the final distribution manifest and
+links their already-installed package identities at the root resolution scope.
+This lets plugin-owned code emitted into shared root chunks resolve the same
+packages while retaining the plugin-local links needed by plugin-root chunks.
+The composition performs no second install or dependency resolution and fails
+instead of replacing an incompatible root binding.
+This includes WhatsApp: `OPENCLAW_EXTENSIONS=whatsapp` compiles and packages its
+runtime. Ordinary source builds generate its runtime through the separate
+external-plugin build path; root npm artifacts continue to exclude it. Selected
+plugins must compile successfully; unselected external plugin source and
+runtime output are pruned.
+
+The install layer stages every workspace's `package.json` so frozen-lockfile
+validation can check the complete workspace. The build stage installs workspace
+dependencies needed to compile plugin assets; the production stage installs only
+core, shared packages, and required or selected plugins. Staging a plugin manifest
+does not select that plugin for the runtime image.
+
+For example, these commands build separate, multi-architecture standalone
+FakeCo Gateway images for ClickClack, Slack, and Microsoft Teams. ClawRouter is
+already part of the root OpenClaw runtime, so the ClickClack image selects only
+`clickclack`. The explicit empty browser argument keeps the default image free
+of Chromium:
 
 ```bash
-export OPENCLAW_DOCKER_APT_PACKAGES="git curl jq"
-./docker-setup.sh
+SOURCE_SHA="$(git rev-parse HEAD)"
+BUILD_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+REGISTRY="registry.example.com/fakeco"
+
+build_gateway_image() {
+  gateway="$1"
+  selected_plugin="$2"
+  docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    --build-arg "GIT_COMMIT=${SOURCE_SHA}" \
+    --build-arg "OPENCLAW_BUILD_TIMESTAMP=${BUILD_TIMESTAMP}" \
+    --build-arg "OPENCLAW_EXTENSIONS=${selected_plugin}" \
+    --build-arg OPENCLAW_INSTALL_BROWSER= \
+    --provenance=mode=max \
+    --sbom=true \
+    --tag "${REGISTRY}/openclaw-${gateway}:${SOURCE_SHA}" \
+    --push \
+    .
+}
+
+build_gateway_image clickclack clickclack
+build_gateway_image slack slack
+build_gateway_image teams msteams
 ```
 
-3. **Install Playwright browsers without `npx`** (avoids npm override conflicts):
+Use `--platform linux/arm64 --load` or `--platform linux/amd64 --load` for a
+single native local build. Multi-platform output and attached SBOM/provenance
+require a registry or another Buildx output that preserves attestations. After
+pushing, inspect the manifest and deploy the immutable digest rather than the
+mutable source-SHA tag:
 
 ```bash
-docker compose run --rm openclaw-cli \
-  node /app/node_modules/playwright-core/cli.js install chromium
+docker buildx imagetools inspect \
+  "${REGISTRY}/openclaw-clickclack:${SOURCE_SHA}"
+# Deploy: registry.example.com/fakeco/openclaw-clickclack@sha256:<manifest-digest>
 ```
 
-If you need Playwright to install system deps, rebuild the image with
-`OPENCLAW_DOCKER_APT_PACKAGES` instead of using `--with-deps` at runtime.
+These images are for standalone OCI-based Gateways and generic Docker users.
+Crabhelm-managed Gateways do not consume them: that delivery path builds a
+separate x86_64 appliance archive containing an OpenClaw npm tarball and pins
+the Node, archive, and manifest digests. Build that appliance independently
+from the same landed OpenClaw source.
 
-4. **Persist Playwright browser downloads**:
+To test bundled plugin source against a packaged image, mount one plugin source directory over its packaged source path, e.g. `OPENCLAW_EXTRA_MOUNTS=/path/to/fork/extensions/synology-chat:/app/extensions/synology-chat:ro`. That overrides the matching compiled `/app/dist/extensions/synology-chat` bundle for the same plugin id. Restart the Gateway after adding or changing a mount; runtime loading and setup use the mounted source.
 
-- Set `PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright` in
-  `docker-compose.yml`.
-- Ensure `/home/node` persists via `OPENCLAW_HOME_VOLUME`, or mount
-  `/home/node/.cache/ms-playwright` via `OPENCLAW_EXTRA_MOUNTS`.
+### Observability
 
-### Permissions + EACCES
-
-The image runs as `node` (uid 1000). If you see permission errors on
-`/home/node/.openclaw`, make sure your host bind mounts are owned by uid 1000.
-
-Example (Linux host):
+OpenTelemetry export is outbound from the Gateway container to your OTLP collector; it needs no published Docker port. To include the bundled exporter in a locally built image:
 
 ```bash
-sudo chown -R 1000:1000 /path/to/openclaw-config /path/to/openclaw-workspace
+export OPENCLAW_EXTENSIONS="diagnostics-otel"
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
+export OTEL_SERVICE_NAME="openclaw-gateway"
+./scripts/docker/setup.sh
 ```
 
-If you choose to run as root for convenience, you accept the security tradeoff.
+Official prebuilt images already bundle `diagnostics-otel`; install `@openclaw/diagnostics-otel` yourself only if you removed it. To enable export, allow and enable the `diagnostics-otel` plugin in config, then set `diagnostics.otel.enabled=true` (see the full example in [OpenTelemetry export](/gateway/opentelemetry)). Collector auth headers go through `diagnostics.otel.headers`, not Docker environment variables.
 
-### Faster rebuilds (recommended)
+Prometheus metrics reuse the already-published Gateway port. Install `@openclaw/diagnostics-prometheus`, enable the `diagnostics-prometheus` plugin, then scrape:
 
-To speed up rebuilds, order your Dockerfile so dependency layers are cached.
-This avoids re-running `pnpm install` unless lockfiles change:
-
-```dockerfile
-FROM node:24-bookworm
-
-# Install Bun (required for build scripts)
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
-
-RUN corepack enable
-
-WORKDIR /app
-
-# Cache dependencies unless package metadata changes
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY ui/package.json ./ui/package.json
-COPY scripts ./scripts
-
-RUN pnpm install --frozen-lockfile
-
-COPY . .
-RUN pnpm build
-RUN pnpm ui:install
-RUN pnpm ui:build
-
-ENV NODE_ENV=production
-
-CMD ["node","dist/index.js"]
+```text
+http://<gateway-host>:18789/api/diagnostics/prometheus
 ```
 
-### Channel setup (optional)
-
-Use the CLI container to configure channels, then restart the gateway if needed.
-
-WhatsApp (QR):
-
-```bash
-docker compose run --rm openclaw-cli channels login
-```
-
-Telegram (bot token):
-
-```bash
-docker compose run --rm openclaw-cli channels add --channel telegram --token "<token>"
-```
-
-Discord (bot token):
-
-```bash
-docker compose run --rm openclaw-cli channels add --channel discord --token "<token>"
-```
-
-Docs: [WhatsApp](/channels/whatsapp), [Telegram](/channels/telegram), [Discord](/channels/discord)
-
-### OpenAI Codex OAuth (headless Docker)
-
-If you pick OpenAI Codex OAuth in the wizard, it opens a browser URL and tries
-to capture a callback on `http://127.0.0.1:1455/auth/callback`. In Docker or
-headless setups that callback can show a browser error. Copy the full redirect
-URL you land on and paste it back into the wizard to finish auth.
+The route is protected by Gateway authentication; don't expose a separate public `/metrics` port or unauthenticated reverse-proxy path. See [Prometheus metrics](/gateway/prometheus).
 
 ### Health checks
 
-Container probe endpoints (no auth required):
+Container check endpoints (no auth required):
 
 ```bash
-curl -fsS http://127.0.0.1:18789/healthz
-curl -fsS http://127.0.0.1:18789/readyz
+curl -fsS http://127.0.0.1:18789/healthz   # liveness
+curl -fsS http://127.0.0.1:18789/startupz  # startup and traffic admission
+curl -fsS http://127.0.0.1:18789/readyz    # deep, channel-aware readiness
 ```
 
-Aliases: `/health` and `/ready`.
+The image's built-in `HEALTHCHECK` pings `/healthz`; repeated failures mark the container `unhealthy` so orchestrators can restart or replace it.
+It uses the live Gateway lock's port first, then `OPENCLAW_GATEWAY_PORT`, then
+the configured port. An explicit environment port still works when the config
+cannot be loaded.
+Use `/startupz` for an orchestrator startup or readiness check so a failed channel account does not remove the otherwise healthy Gateway and Control UI from service. Use `/readyz` for monitoring that intentionally treats hard channel failures as not ready. See [Health checks](/gateway/health#http-probes) for response details.
 
-`/healthz` is a shallow liveness probe for "the gateway process is up".
-`/readyz` stays ready during startup grace, then becomes `503` only if required
-managed channels are still disconnected after grace or disconnect later.
-
-The Docker image includes a built-in `HEALTHCHECK` that pings `/healthz` in the
-background. In plain terms: Docker keeps checking if OpenClaw is still
-responsive. If checks keep failing, Docker marks the container as `unhealthy`,
-and orchestration systems (Docker Compose restart policy, Swarm, Kubernetes,
-etc.) can automatically restart or replace it.
-
-Authenticated deep health snapshot (gateway + channels):
+Authenticated deep health snapshot:
 
 ```bash
-docker compose exec openclaw-gateway node dist/index.js health --token "$OPENCLAW_GATEWAY_TOKEN"
+docker compose exec openclaw-gateway sh -lc 'node dist/index.js gateway health --token "$OPENCLAW_GATEWAY_TOKEN"'
 ```
 
-### E2E smoke test (Docker)
-
-```bash
-scripts/e2e/onboard-docker.sh
-```
-
-### QR import smoke test (Docker)
-
-```bash
-pnpm test:docker:qr
-```
-
-### LAN vs loopback (Docker Compose)
-
-`docker-setup.sh` defaults `OPENCLAW_GATEWAY_BIND=lan` so host access to
-`http://127.0.0.1:18789` works with Docker port publishing.
-
-- `lan` (default): host browser + host CLI can reach the published gateway port.
-- `loopback`: only processes inside the container network namespace can reach
-  the gateway directly; host-published port access may fail.
-
-The setup script also pins `gateway.mode=local` after onboarding so Docker CLI
-commands default to local loopback targeting.
-
-Legacy config note: use bind mode values in `gateway.bind` (`lan` / `loopback` /
-`custom` / `tailnet` / `auto`), not host aliases (`0.0.0.0`, `127.0.0.1`,
-`localhost`, `::`, `::1`).
-
-If you see `Gateway target: ws://172.x.x.x:18789` or repeated `pairing required`
-errors from Docker CLI commands, run:
-
-```bash
-docker compose run --rm openclaw-cli config set gateway.mode local
-docker compose run --rm openclaw-cli config set gateway.bind lan
-docker compose run --rm openclaw-cli devices list --url ws://127.0.0.1:18789
-```
-
-### Notes
-
-- Gateway bind defaults to `lan` for container use (`OPENCLAW_GATEWAY_BIND`).
-- Dockerfile CMD uses `--allow-unconfigured`; mounted config with `gateway.mode` not `local` will still start. Override CMD to enforce the guard.
-- The gateway container is the source of truth for sessions (`~/.openclaw/agents/<agentId>/sessions/`).
-
-### Storage model
-
-- **Persistent host data:** Docker Compose bind-mounts `OPENCLAW_CONFIG_DIR` to `/home/node/.openclaw` and `OPENCLAW_WORKSPACE_DIR` to `/home/node/.openclaw/workspace`, so those paths survive container replacement.
-- **Ephemeral sandbox tmpfs:** when `agents.defaults.sandbox` is enabled, the sandbox containers use `tmpfs` for `/tmp`, `/var/tmp`, and `/run`. Those mounts are separate from the top-level Compose stack and disappear with the sandbox container.
-- **Disk growth hotspots:** watch `media/`, `agents/<agentId>/sessions/sessions.json`, transcript JSONL files, `cron/runs/*.jsonl`, and rolling file logs under `/tmp/openclaw/` (or your configured `logging.file`). If you also run the macOS app outside Docker, its service logs are separate again: `~/.openclaw/logs/gateway.log`, `~/.openclaw/logs/gateway.err.log`, and `/tmp/openclaw/openclaw-gateway.log`.
-
-## Agent Sandbox (host gateway + Docker tools)
-
-Deep dive: [Sandboxing](/gateway/sandboxing)
-
-### What it does
-
-When `agents.defaults.sandbox` is enabled, **non-main sessions** run tools inside a Docker
-container. The gateway stays on your host, but the tool execution is isolated:
-
-- scope: `"agent"` by default (one container + workspace per agent)
-- scope: `"session"` for per-session isolation
-- per-scope workspace folder mounted at `/workspace`
-- optional agent workspace access (`agents.defaults.sandbox.workspaceAccess`)
-- allow/deny tool policy (deny wins)
-- inbound media is copied into the active sandbox workspace (`media/inbound/*`) so tools can read it (with `workspaceAccess: "rw"`, this lands in the agent workspace)
-
-Warning: `scope: "shared"` disables cross-session isolation. All sessions share
-one container and one workspace.
-
-### Per-agent sandbox profiles (multi-agent)
-
-If you use multi-agent routing, each agent can override sandbox + tool settings:
-`agents.list[].sandbox` and `agents.list[].tools` (plus `agents.list[].tools.sandbox.tools`). This lets you run
-mixed access levels in one gateway:
-
-- Full access (personal agent)
-- Read-only tools + read-only workspace (family/work agent)
-- No filesystem/shell tools (public agent)
-
-See [Multi-Agent Sandbox & Tools](/tools/multi-agent-sandbox-tools) for examples,
-precedence, and troubleshooting.
-
-### Default behavior
-
-- Image: `openclaw-sandbox:bookworm-slim`
-- One container per agent
-- Agent workspace access: `workspaceAccess: "none"` (default) uses `~/.openclaw/sandboxes`
-  - `"ro"` keeps the sandbox workspace at `/workspace` and mounts the agent workspace read-only at `/agent` (disables `write`/`edit`/`apply_patch`)
-  - `"rw"` mounts the agent workspace read/write at `/workspace`
-- Auto-prune: idle > 24h OR age > 7d
-- Network: `none` by default (explicitly opt-in if you need egress)
-  - `host` is blocked.
-  - `container:<id>` is blocked by default (namespace-join risk).
-- Default allow: `exec`, `process`, `read`, `write`, `edit`, `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`
-- Default deny: `browser`, `canvas`, `nodes`, `cron`, `discord`, `gateway`
-
-### Enable sandboxing
-
-If you plan to install packages in `setupCommand`, note:
-
-- Default `docker.network` is `"none"` (no egress).
-- `docker.network: "host"` is blocked.
-- `docker.network: "container:<id>"` is blocked by default.
-- Break-glass override: `agents.defaults.sandbox.docker.dangerouslyAllowContainerNamespaceJoin: true`.
-- `readOnlyRoot: true` blocks package installs.
-- `user` must be root for `apt-get` (omit `user` or set `user: "0:0"`).
-  OpenClaw auto-recreates containers when `setupCommand` (or docker config) changes
-  unless the container was **recently used** (within ~5 minutes). Hot containers
-  log a warning with the exact `openclaw sandbox recreate ...` command.
-
-```json5
-{
-  agents: {
-    defaults: {
-      sandbox: {
-        mode: "non-main", // off | non-main | all
-        scope: "agent", // session | agent | shared (agent is default)
-        workspaceAccess: "none", // none | ro | rw
-        workspaceRoot: "~/.openclaw/sandboxes",
-        docker: {
-          image: "openclaw-sandbox:bookworm-slim",
-          workdir: "/workspace",
-          readOnlyRoot: true,
-          tmpfs: ["/tmp", "/var/tmp", "/run"],
-          network: "none",
-          user: "1000:1000",
-          capDrop: ["ALL"],
-          env: { LANG: "C.UTF-8" },
-          setupCommand: "apt-get update && apt-get install -y git curl jq",
-          pidsLimit: 256,
-          memory: "1g",
-          memorySwap: "2g",
-          cpus: 1,
-          ulimits: {
-            nofile: { soft: 1024, hard: 2048 },
-            nproc: 256,
-          },
-          seccompProfile: "/path/to/seccomp.json",
-          apparmorProfile: "openclaw-sandbox",
-          dns: ["1.1.1.1", "8.8.8.8"],
-          extraHosts: ["internal.service:10.0.0.5"],
-        },
-        prune: {
-          idleHours: 24, // 0 disables idle pruning
-          maxAgeDays: 7, // 0 disables max-age pruning
-        },
-      },
-    },
-  },
-  tools: {
-    sandbox: {
-      tools: {
-        allow: [
-          "exec",
-          "process",
-          "read",
-          "write",
-          "edit",
-          "sessions_list",
-          "sessions_history",
-          "sessions_send",
-          "sessions_spawn",
-          "session_status",
-        ],
-        deny: ["browser", "canvas", "nodes", "cron", "discord", "gateway"],
-      },
-    },
-  },
-}
-```
-
-Hardening knobs live under `agents.defaults.sandbox.docker`:
-`network`, `user`, `pidsLimit`, `memory`, `memorySwap`, `cpus`, `ulimits`,
-`seccompProfile`, `apparmorProfile`, `dns`, `extraHosts`,
-`dangerouslyAllowContainerNamespaceJoin` (break-glass only).
-
-Multi-agent: override `agents.defaults.sandbox.{docker,browser,prune}.*` per agent via `agents.list[].sandbox.{docker,browser,prune}.*`
-(ignored when `agents.defaults.sandbox.scope` / `agents.list[].sandbox.scope` is `"shared"`).
-
-### Build the default sandbox image
-
-```bash
-scripts/sandbox-setup.sh
-```
-
-This builds `openclaw-sandbox:bookworm-slim` using `Dockerfile.sandbox`.
-
-### Sandbox common image (optional)
-
-If you want a sandbox image with common build tooling (Node, Go, Rust, etc.), build the common image:
-
-```bash
-scripts/sandbox-common-setup.sh
-```
-
-This builds `openclaw-sandbox-common:bookworm-slim`. To use it:
-
-```json5
-{
-  agents: {
-    defaults: {
-      sandbox: { docker: { image: "openclaw-sandbox-common:bookworm-slim" } },
-    },
-  },
-}
-```
-
-### Sandbox browser image
-
-To run the browser tool inside the sandbox, build the browser image:
-
-```bash
-scripts/sandbox-browser-setup.sh
-```
-
-This builds `openclaw-sandbox-browser:bookworm-slim` using
-`Dockerfile.sandbox-browser`. The container runs Chromium with CDP enabled and
-an optional noVNC observer (headful via Xvfb).
-
-Notes:
-
-- Docker and other headless/container browser flows stay on raw CDP. Chrome MCP `existing-session` is for host-local Chrome, not container takeover.
-- Headful (Xvfb) reduces bot blocking vs headless.
-- Headless can still be used by setting `agents.defaults.sandbox.browser.headless=true`.
-- No full desktop environment (GNOME) is needed; Xvfb provides the display.
-- Browser containers default to a dedicated Docker network (`openclaw-sandbox-browser`) instead of global `bridge`.
-- Optional `agents.defaults.sandbox.browser.cdpSourceRange` restricts container-edge CDP ingress by CIDR (for example `172.21.0.1/32`).
-- noVNC observer access is password-protected by default; OpenClaw provides a short-lived observer token URL that serves a local bootstrap page and keeps the password in URL fragment (instead of URL query).
-- Browser container startup defaults are conservative for shared/container workloads, including:
-  - `--remote-debugging-address=127.0.0.1`
-  - `--remote-debugging-port=<derived from OPENCLAW_BROWSER_CDP_PORT>`
-  - `--user-data-dir=${HOME}/.chrome`
-  - `--no-first-run`
-  - `--no-default-browser-check`
-  - `--disable-3d-apis`
-  - `--disable-software-rasterizer`
-  - `--disable-gpu`
-  - `--disable-dev-shm-usage`
-  - `--disable-background-networking`
-  - `--disable-features=TranslateUI`
-  - `--disable-breakpad`
-  - `--disable-crash-reporter`
-  - `--metrics-recording-only`
-  - `--renderer-process-limit=2`
-  - `--no-zygote`
-  - `--disable-extensions`
-  - If `agents.defaults.sandbox.browser.noSandbox` is set, `--no-sandbox` and
-    `--disable-setuid-sandbox` are also appended.
-  - The three graphics hardening flags above are optional. If your workload needs
-    WebGL/3D, set `OPENCLAW_BROWSER_DISABLE_GRAPHICS_FLAGS=0` to run without
-    `--disable-3d-apis`, `--disable-software-rasterizer`, and `--disable-gpu`.
-  - Extension behavior is controlled by `--disable-extensions` and can be disabled
-    (enables extensions) via `OPENCLAW_BROWSER_DISABLE_EXTENSIONS=0` for
-    extension-dependent pages or extensions-heavy workflows.
-  - `--renderer-process-limit=2` is also configurable with
-    `OPENCLAW_BROWSER_RENDERER_PROCESS_LIMIT`; set `0` to let Chromium choose its
-    default process limit when browser concurrency needs tuning.
-
-Defaults are applied by default in the bundled image. If you need different
-Chromium flags, use a custom browser image and provide your own entrypoint.
-
-Use config:
-
-```json5
-{
-  agents: {
-    defaults: {
-      sandbox: {
-        browser: { enabled: true },
-      },
-    },
-  },
-}
-```
-
-Custom browser image:
-
-```json5
-{
-  agents: {
-    defaults: {
-      sandbox: { browser: { image: "my-openclaw-browser" } },
-    },
-  },
-}
-```
-
-When enabled, the agent receives:
-
-- a sandbox browser control URL (for the `browser` tool)
-- a noVNC URL (if enabled and headless=false)
-
-Remember: if you use an allowlist for tools, add `browser` (and remove it from
-deny) or the tool remains blocked.
-Prune rules (`agents.defaults.sandbox.prune`) apply to browser containers too.
-
-### Custom sandbox image
-
-Build your own image and point config to it:
-
-```bash
-docker build -t my-openclaw-sbx -f Dockerfile.sandbox .
-```
-
-```json5
-{
-  agents: {
-    defaults: {
-      sandbox: { docker: { image: "my-openclaw-sbx" } },
-    },
-  },
-}
-```
-
-### Tool policy (allow/deny)
-
-- `deny` wins over `allow`.
-- If `allow` is empty: all tools (except deny) are available.
-- If `allow` is non-empty: only tools in `allow` are available (minus deny).
-
-### Pruning strategy
-
-Two knobs:
-
-- `prune.idleHours`: remove containers not used in X hours (0 = disable)
-- `prune.maxAgeDays`: remove containers older than X days (0 = disable)
-
-Example:
-
-- Keep busy sessions but cap lifetime:
-  `idleHours: 24`, `maxAgeDays: 7`
-- Never prune:
-  `idleHours: 0`, `maxAgeDays: 0`
-
-### Security notes
-
-- Hard wall only applies to **tools** (exec/read/write/edit/apply_patch).
-- Host-only tools like browser/camera/canvas are blocked by default.
-- Allowing `browser` in sandbox **breaks isolation** (browser runs on host).
-
-## Troubleshooting
-
-- Image missing: build with [`scripts/sandbox-setup.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/sandbox-setup.sh) or set `agents.defaults.sandbox.docker.image`.
-- Container not running: it will auto-create per session on demand.
-- Permission errors in sandbox: set `docker.user` to a UID:GID that matches your
-  mounted workspace ownership (or chown the workspace folder).
-- Custom tools not found: OpenClaw runs commands with `sh -lc` (login shell), which
-  sources `/etc/profile` and may reset PATH. Set `docker.env.PATH` to prepend your
-  custom tool paths (e.g., `/custom/bin:/usr/local/share/npm-global/bin`), or add
-  a script under `/etc/profile.d/` in your Dockerfile.
+## Detailed topics
+
+<CardGroup cols={2}>
+  <Card title="Environment variables" href="/install/docker/environment-variables" icon="gear">
+    The full variable table, apt/pip build extras, and build-memory tuning.
+  </Card>
+  <Card title="Networking and storage" href="/install/docker/networking-and-storage" icon="server">
+    LAN vs loopback, host.docker.internal, Claude CLI, Bonjour, and mounted state.
+  </Card>
+  <Card title="Compose operations" href="/install/docker/compose-operations" icon="terminal">
+    Compose command table, sandbox/CI/DNS/EACCES accordions, and image refreshes.
+  </Card>
+  <Card title="Sandbox and troubleshooting" href="/install/docker/sandbox-and-troubleshooting" icon="shield">
+    Enabling the agent sandbox plus the Docker troubleshooting accordions.
+  </Card>
+</CardGroup>
+
+- <a id="environment-variables" />[Environment variables](/install/docker/environment-variables#environment-variables)
+- <a id="lan-vs-loopback" />[LAN vs loopback](/install/docker/networking-and-storage#lan-vs-loopback)
+- <a id="host-local-providers" />[Host local providers](/install/docker/networking-and-storage#host-local-providers)
+- <a id="claude-cli-backend-in-docker" />[Claude CLI backend in Docker](/install/docker/networking-and-storage#claude-cli-backend-in-docker)
+- <a id="bonjour-%2F-mdns" /><a id="bonjour-/-mdns" />[Bonjour / mDNS](/install/docker/networking-and-storage#bonjour-%2F-mdns)
+- <a id="storage-and-persistence" />[Storage and persistence](/install/docker/networking-and-storage#storage-and-persistence)
+- <a id="clawdock-migration" />[ClawDock migration](/install/docker/compose-operations#clawdock-migration)
+  - <a id="enable-agent-sandbox-for-docker-gateway" />[Enable agent sandbox for Docker gateway](/install/docker/compose-operations#enable-agent-sandbox-for-docker-gateway)
+  - <a id="automation-ci-non-interactive" />[Automation / CI (non-interactive)](/install/docker/compose-operations#automation-ci-non-interactive)
+  - <a id="shared-network-security-note" />[Shared-network security note](/install/docker/compose-operations#shared-network-security-note)
+  - <a id="docker-desktop-dns-failures-in-openclaw-cli" />[Docker Desktop DNS failures in openclaw-cli](/install/docker/compose-operations#docker-desktop-dns-failures-in-openclaw-cli)
+  - <a id="permissions-and-eacces" />[Permissions and EACCES](/install/docker/compose-operations#permissions-and-eacces)
+  - <a id="faster-rebuilds" />[Faster rebuilds](/install/docker/compose-operations#faster-rebuilds)
+  - <a id="power-user-container-options" />[Power-user container options](/install/docker/compose-operations#power-user-container-options)
+  - <a id="openai-codex-oauth-headless-docker" />[OpenAI Codex OAuth (headless Docker)](/install/docker/compose-operations#openai-codex-oauth-headless-docker)
+  - <a id="base-image-metadata" />[Base image metadata](/install/docker/compose-operations#base-image-metadata)
+- <a id="image-contents-and-security-scanning" />[Image contents and security scanning](/install/docker/compose-operations#image-contents-and-security-scanning)
+- <a id="weekly-image-refreshes" />[Weekly image refreshes](/install/docker/compose-operations#weekly-image-refreshes)
+- <a id="running-on-a-vps%3F" /><a id="running-on-a-vps" />[Running on a VPS?](/install/docker/compose-operations#running-on-a-vps%3F)
+- <a id="agent-sandbox" />[Agent sandbox](/install/docker/sandbox-and-troubleshooting#agent-sandbox)
+  - <a id="quick-enable" />[Quick enable](/install/docker/sandbox-and-troubleshooting#quick-enable)
+- <a id="troubleshooting" />[Troubleshooting](/install/docker/sandbox-and-troubleshooting#troubleshooting)
+  - <a id="image-missing-or-sandbox-container-not-starting" />[Image missing or sandbox container not starting](/install/docker/sandbox-and-troubleshooting#image-missing-or-sandbox-container-not-starting)
+  - <a id="permission-errors-in-sandbox" />[Permission errors in sandbox](/install/docker/sandbox-and-troubleshooting#permission-errors-in-sandbox)
+  - <a id="custom-tools-not-found-in-sandbox" />[Custom tools not found in sandbox](/install/docker/sandbox-and-troubleshooting#custom-tools-not-found-in-sandbox)
+  - <a id="oom-killed-during-image-build-exit-137" />[OOM-killed during image build (exit 137)](/install/docker/sandbox-and-troubleshooting#oom-killed-during-image-build-exit-137)
+  - <a id="unauthorized-or-pairing-required-in-control-ui" />[Unauthorized or pairing required in Control UI](/install/docker/sandbox-and-troubleshooting#unauthorized-or-pairing-required-in-control-ui)
+  - <a id="gateway-target-shows-ws-172-x-x-x-or-pairing-errors-from-docker-cli" />[Gateway target shows ws://172.x.x.x or pairing errors from Docker CLI](/install/docker/sandbox-and-troubleshooting#gateway-target-shows-ws-172-x-x-x-or-pairing-errors-from-docker-cli)
+
+## Related
+
+- [Install Overview](/install) — all installation methods
+- [Podman](/install/podman) — Podman alternative to Docker
+- [Kubernetes](/install/kubernetes) — a minimal Kustomize starting point for running the Gateway on a cluster
+- [Ansible](/install/ansible) — automated server deployment with Tailscale VPN and firewall isolation
+- [Cloudflare Containers](/install/cloudflare) — experimental Worker plus container deployment with Litestream backups to R2
+- [Updating](/install/updating) — keeping OpenClaw up to date
+- [Configuration](/gateway/configuration) — Gateway configuration after install

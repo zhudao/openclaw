@@ -1,33 +1,27 @@
 import {
+  createDefaultModelsPresetAppliers,
+  createDefaultModelsConnectionPresetAppliers,
+} from "openclaw/plugin-sdk/provider-onboard";
+import {
   buildMistralModelDefinition,
   MISTRAL_BASE_URL,
   MISTRAL_DEFAULT_MODEL_ID,
-} from "openclaw/plugin-sdk/provider-models";
-import {
-  applyAgentDefaultModelPrimary,
-  applyProviderConfigWithDefaultModel,
-  type OpenClawConfig,
-} from "openclaw/plugin-sdk/provider-onboard";
+  MISTRAL_DEFAULT_MODEL_REF,
+} from "./model-definitions.js";
 
-export const MISTRAL_DEFAULT_MODEL_REF = `mistral/${MISTRAL_DEFAULT_MODEL_ID}`;
-
-export function applyMistralProviderConfig(cfg: OpenClawConfig): OpenClawConfig {
-  const models = { ...cfg.agents?.defaults?.models };
-  models[MISTRAL_DEFAULT_MODEL_REF] = {
-    ...models[MISTRAL_DEFAULT_MODEL_REF],
-    alias: models[MISTRAL_DEFAULT_MODEL_REF]?.alias ?? "Mistral",
-  };
-
-  return applyProviderConfigWithDefaultModel(cfg, {
-    agentModels: models,
+const mistralPreset = {
+  primaryModelRef: MISTRAL_DEFAULT_MODEL_REF,
+  resolveParams: () => ({
     providerId: "mistral",
     api: "openai-completions",
     baseUrl: MISTRAL_BASE_URL,
-    defaultModel: buildMistralModelDefinition(),
+    defaultModels: () => [buildMistralModelDefinition()],
     defaultModelId: MISTRAL_DEFAULT_MODEL_ID,
-  });
-}
+    aliases: [{ modelRef: MISTRAL_DEFAULT_MODEL_REF, alias: "Mistral" }],
+  }),
+} satisfies Parameters<typeof createDefaultModelsConnectionPresetAppliers<[]>>[0];
 
-export function applyMistralConfig(cfg: OpenClawConfig): OpenClawConfig {
-  return applyAgentDefaultModelPrimary(applyMistralProviderConfig(cfg), MISTRAL_DEFAULT_MODEL_REF);
-}
+export const { applyConfig: applyMistralConfig, applyProviderConfig: applyMistralProviderConfig } =
+  createDefaultModelsPresetAppliers(mistralPreset);
+export const { applyConfig: applyMistralConnectionConfig } =
+  createDefaultModelsConnectionPresetAppliers(mistralPreset);

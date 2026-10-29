@@ -1,122 +1,91 @@
 package ai.openclaw.app.voice
 
+import ai.openclaw.app.i18n.NativeText
+import ai.openclaw.app.i18n.nativeText
+import ai.openclaw.app.isAndroidRealtimeRelayModelSupported
+import ai.openclaw.app.node.asObjectOrNull
+import ai.openclaw.app.node.asStringOrNull
 import ai.openclaw.app.normalizeMainKey
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
+import java.util.Locale
 
-internal data class TalkProviderConfigSelection(
-  val provider: String,
-  val config: JsonObject,
-  val normalizedPayload: Boolean,
-)
+internal enum class TalkModeRoute {
+  RealtimeRelay,
+  NativeConfigured,
+  NativeAndroidFallback,
+  NativeGatewayFallback,
+  ;
+
+  val description: NativeText?
+    get() =
+      when (this) {
+        RealtimeRelay -> null
+        NativeConfigured -> nativeText("Native Talk: using device speech recognition and configured Talk voice.")
+        NativeAndroidFallback -> nativeText("Native Talk: Gateway did not advertise GPT-Live relay support; using device speech recognition and configured Talk voice.")
+        NativeGatewayFallback -> nativeText("Native Talk: Gateway relay is unavailable for this configuration; using device speech recognition and configured Talk voice.")
+      }
+}
 
 internal data class TalkModeGatewayConfigState(
-  val activeProvider: String,
-  val normalizedPayload: Boolean,
-  val missingResolvedPayload: Boolean,
   val mainSessionKey: String,
-  val defaultVoiceId: String?,
-  val voiceAliases: Map<String, String>,
-  val defaultModelId: String,
-  val defaultOutputFormat: String,
-  val apiKey: String?,
+  val speechLocale: String?,
   val interruptOnSpeech: Boolean?,
   val silenceTimeoutMs: Long,
-)
+  val route: TalkModeRoute,
+) {
+  val realtimeRelayModelSupported: Boolean get() = route == TalkModeRoute.RealtimeRelay
+}
 
 internal object TalkModeGatewayConfigParser {
-  private const val defaultTalkProvider = "elevenlabs"
-
-  fun parse(
-    config: JsonObject?,
-    defaultProvider: String,
-    defaultModelIdFallback: String,
-    defaultOutputFormatFallback: String,
-    envVoice: String?,
-    sagVoice: String?,
-    envKey: String?,
-  ): TalkModeGatewayConfigState {
+  /** Reads gateway talk/session config into the runtime state TalkMode needs. */
+  fun parse(config: JsonObject?): TalkModeGatewayConfigState {
     val talk = config?.get("talk").asObjectOrNull()
-    val selection = selectTalkProviderConfig(talk)
-    val activeProvider = selection?.provider ?: defaultProvider
-    val activeConfig = selection?.config
+    // talk.config carries the top-level model (plus voice-model default) in
+    // realtime.model, but a provider-level providers.<id>.model is NOT promoted
+    // into it — fall back to the selected provider's entry so a gpt-live model
+    // without a Gateway relay hint still takes the legacy native Talk route.
+    val realtime = talk?.get("realtime").asObjectOrNull()
+    val realtimeProvider = realtime?.get("provider").asStringOrNull()
+    val realtimeClientHints =
+      config
+        ?.get("clientHints")
+        .asObjectOrNull()
+        ?.get("realtime")
+        .asObjectOrNull()
+    val realtimeModel =
+      realtime?.get("model").asStringOrNull()
+        ?: realtimeProvider?.let { provider ->
+          realtime
+            ?.get("providers")
+            .asObjectOrNull()
+            ?.get(provider)
+            .asObjectOrNull()
+            ?.get("model")
+            .asStringOrNull()
+        }
     val sessionCfg = config?.get("session").asObjectOrNull()
-    val mainKey = normalizeMainKey(sessionCfg?.get("mainKey").asStringOrNull())
-    val voice = activeConfig?.get("voiceId")?.asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-    val aliases =
-      activeConfig?.get("voiceAliases").asObjectOrNull()?.entries?.mapNotNull { (key, value) ->
-        val id = value.asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-        normalizeTalkAliasKey(key).takeIf { it.isNotEmpty() }?.let { it to id }
-      }?.toMap().orEmpty()
-    val model = activeConfig?.get("modelId")?.asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-    val outputFormat =
-      activeConfig?.get("outputFormat")?.asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-    val key = activeConfig?.get("apiKey")?.asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-    val interrupt = talk?.get("interruptOnSpeech")?.asBooleanOrNull()
-    val silenceTimeoutMs = resolvedSilenceTimeoutMs(talk)
-
     return TalkModeGatewayConfigState(
-      activeProvider = activeProvider,
-      normalizedPayload = selection?.normalizedPayload == true,
-      missingResolvedPayload = talk != null && selection == null,
-      mainSessionKey = mainKey,
-      defaultVoiceId =
-        if (activeProvider == defaultProvider) {
-          voice ?: envVoice?.takeIf { it.isNotEmpty() } ?: sagVoice?.takeIf { it.isNotEmpty() }
-        } else {
-          voice
+      mainSessionKey = normalizeMainKey(sessionCfg?.get("mainKey").asStringOrNull()),
+      speechLocale = normalizeSpeechLocaleTag(talk?.get("speechLocale").asStringOrNull()),
+      interruptOnSpeech = talk?.get("interruptOnSpeech").asBooleanOrNull(),
+      silenceTimeoutMs = resolvedSilenceTimeoutMs(talk),
+      // gateway-relay carries only realtime sessions; stt-tts runs as native Talk
+      // (device STT, chat.send, talk.speak) so the configured Talk voice is used.
+      route =
+        when {
+          realtime?.get("mode").asStringOrNull() == "stt-tts" -> TalkModeRoute.NativeConfigured
+          realtimeClientHints?.get("gatewayRelaySupported").asBooleanOrNull() == true -> TalkModeRoute.RealtimeRelay
+          realtimeClientHints?.get("gatewayRelaySupported").asBooleanOrNull() == false -> TalkModeRoute.NativeGatewayFallback
+          !isAndroidRealtimeRelayModelSupported(realtimeModel) -> TalkModeRoute.NativeAndroidFallback
+          else -> TalkModeRoute.RealtimeRelay
         },
-      voiceAliases = aliases,
-      defaultModelId = model ?: defaultModelIdFallback,
-      defaultOutputFormat = outputFormat ?: defaultOutputFormatFallback,
-      apiKey = key ?: envKey?.takeIf { it.isNotEmpty() },
-      interruptOnSpeech = interrupt,
-      silenceTimeoutMs = silenceTimeoutMs,
     )
   }
 
-  fun fallback(
-    defaultProvider: String,
-    defaultModelIdFallback: String,
-    defaultOutputFormatFallback: String,
-    envVoice: String?,
-    sagVoice: String?,
-    envKey: String?,
-  ): TalkModeGatewayConfigState =
-    TalkModeGatewayConfigState(
-      activeProvider = defaultProvider,
-      normalizedPayload = false,
-      missingResolvedPayload = false,
-      mainSessionKey = "main",
-      defaultVoiceId = envVoice?.takeIf { it.isNotEmpty() } ?: sagVoice?.takeIf { it.isNotEmpty() },
-      voiceAliases = emptyMap(),
-      defaultModelId = defaultModelIdFallback,
-      defaultOutputFormat = defaultOutputFormatFallback,
-      apiKey = envKey?.takeIf { it.isNotEmpty() },
-      interruptOnSpeech = null,
-      silenceTimeoutMs = TalkDefaults.defaultSilenceTimeoutMs,
-    )
-
-  fun selectTalkProviderConfig(talk: JsonObject?): TalkProviderConfigSelection? {
-    if (talk == null) return null
-    selectResolvedTalkProviderConfig(talk)?.let { return it }
-    val rawProvider = talk["provider"].asStringOrNull()
-    val rawProviders = talk["providers"].asObjectOrNull()
-    val hasNormalizedPayload = rawProvider != null || rawProviders != null
-    if (hasNormalizedPayload) {
-      return null
-    }
-    return TalkProviderConfigSelection(
-      provider = defaultTalkProvider,
-      config = talk,
-      normalizedPayload = false,
-    )
-  }
-
+  /** Accepts only numeric whole-millisecond silence timeouts; malformed config uses defaults. */
   fun resolvedSilenceTimeoutMs(talk: JsonObject?): Long {
     val fallback = TalkDefaults.defaultSilenceTimeoutMs
     val primitive = talk?.get("silenceTimeoutMs") as? JsonPrimitive ?: return fallback
@@ -127,35 +96,42 @@ internal object TalkModeGatewayConfigParser {
     }
     return timeout.toLong()
   }
-
-  private fun selectResolvedTalkProviderConfig(talk: JsonObject): TalkProviderConfigSelection? {
-    val resolved = talk["resolved"].asObjectOrNull() ?: return null
-    val providerId = normalizeTalkProviderId(resolved["provider"].asStringOrNull()) ?: return null
-    return TalkProviderConfigSelection(
-      provider = providerId,
-      config = resolved["config"].asObjectOrNull() ?: buildJsonObject {},
-      normalizedPayload = true,
-    )
-  }
-
-  private fun normalizeTalkProviderId(raw: String?): String? {
-    val trimmed = raw?.trim()?.lowercase().orEmpty()
-    return trimmed.takeIf { it.isNotEmpty() }
-  }
 }
 
-private fun normalizeTalkAliasKey(value: String): String =
-  value.trim().lowercase()
+private fun JsonElement?.asBooleanOrNull(): Boolean? = (this as? JsonPrimitive)?.booleanOrNull
 
-private fun JsonElement?.asStringOrNull(): String? =
-  this?.let { element ->
-    element as? JsonPrimitive
-  }?.contentOrNull
-
-private fun JsonElement?.asBooleanOrNull(): Boolean? {
-  val primitive = this as? JsonPrimitive ?: return null
-  return primitive.booleanOrNull
+internal fun normalizeSpeechLocaleTag(value: String?): String? {
+  val candidate =
+    value
+      ?.trim()
+      ?.replace('_', '-')
+      ?.takeIf(String::isNotEmpty)
+      ?: return null
+  val locale = Locale.forLanguageTag(candidate)
+  return locale
+    .toLanguageTag()
+    .takeIf { tag -> locale.language.isNotBlank() && tag != "und" }
 }
 
-private fun JsonElement?.asObjectOrNull(): JsonObject? =
-  this as? JsonObject
+internal fun realtimeTranscriptionLanguage(localeTag: String?): String? =
+  localeTag
+    ?.let(Locale::forLanguageTag)
+    ?.language
+    ?.lowercase(Locale.ROOT)
+    ?.takeIf { language ->
+      language.length == ISO_639_1_LANGUAGE_LENGTH &&
+        language.all { character -> character in 'a'..'z' }
+    }
+
+internal fun resolveRealtimeTranscriptionLanguageHint(
+  configuredLocaleTag: String?,
+  requestedLanguage: String?,
+  deviceLocaleTag: String?,
+): String? =
+  realtimeTranscriptionLanguage(
+    configuredLocaleTag
+      ?: requestedLanguage
+      ?: deviceLocaleTag,
+  )
+
+private const val ISO_639_1_LANGUAGE_LENGTH = 2

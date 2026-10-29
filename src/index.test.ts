@@ -1,20 +1,9 @@
+// Tests public package entrypoint exports and load behavior.
 import fs from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-const runtimeMocks = vi.hoisted(() => ({
-  runCli: vi.fn(async () => {}),
-}));
-
-vi.mock("./cli/run-main.js", () => ({
-  runCli: runtimeMocks.runCli,
-}));
+import { describe, expect, it, vi } from "vitest";
+import { applyTemplate, runLegacyCliEntry } from "./index.js";
 
 describe("legacy root entry", () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-  });
-
   it("routes the package root export to the pure library entry", () => {
     const packageJson = JSON.parse(
       fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -27,34 +16,30 @@ describe("legacy root entry", () => {
     expect(packageJson.exports?.["."]).toBe("./dist/index.js");
   });
 
-  it("does not run CLI bootstrap when imported as a library dependency", async () => {
-    const mod = await import("./index.js");
+  it("renders library templates and forwards explicit legacy CLI calls", async () => {
+    const runCli = vi.fn(async () => undefined);
 
-    expect(typeof mod.runLegacyCliEntry).toBe("function");
-    expect(runtimeMocks.runCli).not.toHaveBeenCalled();
+    expect(applyTemplate("Hello {{MessageSid}}", { MessageSid: "operator" })).toBe(
+      "Hello operator",
+    );
+
+    await runLegacyCliEntry(["openclaw", "status"], { runCli });
+    expect(runCli).toHaveBeenCalledWith(["openclaw", "status"], undefined);
   });
 
-  it("keeps library imports free of global window shims", async () => {
-    const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
-    Reflect.deleteProperty(globalThis as object, "window");
+  it("forwards process-lifetime console routing for executable callers", async () => {
+    const runCli = vi.fn(async () => undefined);
 
-    try {
-      await import("./index.js");
-      expect("window" in globalThis).toBe(false);
-    } finally {
-      if (originalWindowDescriptor) {
-        Object.defineProperty(globalThis, "window", originalWindowDescriptor);
-      }
-    }
-  });
+    await runLegacyCliEntry(
+      ["openclaw", "agent", "exec", "inspect", "--json"],
+      { runCli },
+      {
+        retainConsoleRoutingUntilProcessExit: true,
+      },
+    );
 
-  it("delegates legacy direct-entry execution to run-main", async () => {
-    const mod = await import("./index.js");
-    const argv = ["node", "dist/index.js", "status"];
-
-    await mod.runLegacyCliEntry(argv);
-
-    expect(runtimeMocks.runCli).toHaveBeenCalledOnce();
-    expect(runtimeMocks.runCli).toHaveBeenCalledWith(argv);
+    expect(runCli).toHaveBeenCalledWith(["openclaw", "agent", "exec", "inspect", "--json"], {
+      retainConsoleRoutingUntilProcessExit: true,
+    });
   });
 });

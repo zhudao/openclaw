@@ -1,52 +1,76 @@
-import { definePluginEntry } from "openclaw/plugin-sdk/core";
-import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-auth";
-import { buildSingleProviderApiKeyCatalog } from "openclaw/plugin-sdk/provider-catalog";
-import { applyVercelAiGatewayConfig, VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF } from "./onboard.js";
-import { buildVercelAiGatewayProvider } from "./provider-catalog.js";
+import {
+  resolveRecommendedStarterModel,
+  runLiveProviderCatalog,
+} from "openclaw/plugin-sdk/provider-catalog-live-runtime";
+import { defineSingleProviderPluginEntry } from "openclaw/plugin-sdk/provider-entry";
+import { VERCEL_AI_GATEWAY_BASE_URL, vercelAiGatewayFetchGuard } from "./models.js";
+import manifest from "./openclaw.plugin.json" with { type: "json" };
+import {
+  buildStaticVercelAiGatewayProvider,
+  buildVercelAiGatewayProvider,
+  resolveVercelAiGatewayModel,
+} from "./provider-catalog.js";
+import { resolveVercelAiGatewayThinkingProfile } from "./thinking.js";
 
 const PROVIDER_ID = "vercel-ai-gateway";
 
-export default definePluginEntry({
+export default defineSingleProviderPluginEntry({
   id: PROVIDER_ID,
   name: "Vercel AI Gateway Provider",
   description: "Bundled Vercel AI Gateway provider plugin",
-  register(api) {
-    api.registerProvider({
-      id: PROVIDER_ID,
-      label: "Vercel AI Gateway",
-      docsPath: "/providers/vercel-ai-gateway",
-      envVars: ["AI_GATEWAY_API_KEY"],
-      auth: [
-        createProviderApiKeyAuthMethod({
+  manifest,
+  provider: {
+    label: "Vercel AI Gateway",
+    docsPath: "/providers/vercel-ai-gateway",
+    manifestAuth: {
+      // Token Pass and other scoped keys list only the models they can call.
+      resolveDefaultModel: async ({ apiKey, config, signal }) =>
+        await resolveRecommendedStarterModel({
           providerId: PROVIDER_ID,
-          methodId: "api-key",
-          label: "Vercel AI Gateway API key",
-          hint: "API key",
-          optionKey: "aiGatewayApiKey",
-          flagName: "--ai-gateway-api-key",
-          envVar: "AI_GATEWAY_API_KEY",
-          promptMessage: "Enter Vercel AI Gateway API key",
-          defaultModel: VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF,
-          expectedProviders: ["vercel-ai-gateway"],
-          applyConfig: (cfg) => applyVercelAiGatewayConfig(cfg),
-          wizard: {
-            choiceId: "ai-gateway-api-key",
-            choiceLabel: "Vercel AI Gateway API key",
-            groupId: "ai-gateway",
-            groupLabel: "Vercel AI Gateway",
-            groupHint: "API key",
-          },
+          config,
+          endpoint: `${VERCEL_AI_GATEWAY_BASE_URL}/v1/models`,
+          apiKey,
+          auditContext: "vercel-ai-gateway-onboarding-model-discovery",
+          fetchGuard: vercelAiGatewayFetchGuard,
+          ...(signal ? { signal } : {}),
         }),
-      ],
-      catalog: {
-        order: "simple",
-        run: (ctx) =>
-          buildSingleProviderApiKeyCatalog({
-            ctx,
-            providerId: PROVIDER_ID,
-            buildProvider: buildVercelAiGatewayProvider,
-          }),
+    },
+    catalog: {
+      run: async (ctx) => {
+        const { apiKey, discoveryApiKey, profileId } = ctx.resolveProviderApiKey(PROVIDER_ID);
+        if (!apiKey) {
+          return null;
+        }
+        // The keyed list is account-scoped: a Token Pass key lists only its models.
+        const run = async () => ({
+          provider: {
+            ...(await buildVercelAiGatewayProvider({ discoveryMode: "strict", discoveryApiKey })),
+            apiKey,
+          },
+        });
+        return await runLiveProviderCatalog({ providerId: PROVIDER_ID, profileId, run });
       },
-    });
+      staticRun: async () => ({ provider: buildStaticVercelAiGatewayProvider() }),
+    },
+    resolveDynamicModel: ({ modelId }) => resolveVercelAiGatewayModel(modelId),
+    resolveThinkingProfile: ({ modelId }) => resolveVercelAiGatewayThinkingProfile(modelId),
+    classifyFailoverReason: ({ status, errorMessage }) => {
+      if (status !== 403) {
+        return undefined;
+      }
+      // Token Pass uses the same status and error type for credit and model scope
+      // failures. Only the documented message distinguishes their cooldown scope.
+      if (/\bVercel Token Pass credits are used up\b/i.test(errorMessage)) {
+        return "billing";
+      }
+      if (
+        /\bscoped to Vercel Token Pass and can only be used with Token Pass models\b/i.test(
+          errorMessage,
+        )
+      ) {
+        return "model_not_found";
+      }
+      return undefined;
+    },
   },
 });

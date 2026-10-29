@@ -1,24 +1,29 @@
-import { normalizeChatType } from "openclaw/plugin-sdk/channel-runtime";
-import type { MsgContext } from "openclaw/plugin-sdk/reply-runtime";
+import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
+
+type DiscordSessionKeyContext = {
+  ChatType?: string;
+  From?: string;
+  SenderId?: string;
+};
 
 export function normalizeExplicitDiscordSessionKey(
   sessionKey: string,
-  ctx: Pick<MsgContext, "ChatType" | "From" | "SenderId">,
+  ctx: DiscordSessionKeyContext,
 ): string {
-  let normalized = sessionKey.trim().toLowerCase();
-  if (normalizeChatType(ctx.ChatType) !== "direct") {
+  let normalized = normalizeLowercaseStringOrEmpty(sessionKey);
+  const chatType = normalizeLowercaseStringOrEmpty(ctx.ChatType);
+  if (chatType !== "direct" && chatType !== "dm") {
     return normalized;
   }
 
-  normalized = normalized.replace(/^(discord:)dm:/, "$1direct:");
-  normalized = normalized.replace(/^(agent:[^:]+:discord:)dm:/, "$1direct:");
+  normalized = normalized.replace(/^((?:agent:[^:]+:)?discord:)dm:/, "$1direct:");
   const match = normalized.match(/^((?:agent:[^:]+:)?)discord:channel:([^:]+)$/);
   if (!match) {
     return normalized;
   }
 
-  const from = (ctx.From ?? "").trim().toLowerCase();
-  const senderId = (ctx.SenderId ?? "").trim().toLowerCase();
+  const from = normalizeLowercaseStringOrEmpty(ctx.From);
+  const senderId = normalizeLowercaseStringOrEmpty(ctx.SenderId);
   const fromDiscordId =
     from.startsWith("discord:") && !from.includes(":channel:") && !from.includes(":group:")
       ? from.slice("discord:".length)

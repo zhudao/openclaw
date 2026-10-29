@@ -1,35 +1,28 @@
+import { readManifestProviderDefaultModelRef } from "openclaw/plugin-sdk/provider-catalog-shared";
 import {
-  buildTogetherModelDefinition,
-  TOGETHER_BASE_URL,
-  TOGETHER_MODEL_CATALOG,
-} from "openclaw/plugin-sdk/provider-models";
-import {
-  applyAgentDefaultModelPrimary,
-  applyProviderConfigWithModelCatalog,
-  type OpenClawConfig,
+  createModelCatalogPresetAppliers,
+  createProviderConnectionPresetAppliers,
 } from "openclaw/plugin-sdk/provider-onboard";
+import { TOGETHER_BASE_URL, TOGETHER_MODEL_CATALOG } from "./models.js";
+import manifest from "./openclaw.plugin.json" with { type: "json" };
 
-export const TOGETHER_DEFAULT_MODEL_REF = "together/moonshotai/Kimi-K2.5";
+export const TOGETHER_DEFAULT_MODEL_REF = readManifestProviderDefaultModelRef(
+  manifest,
+  "together",
+)!;
 
-export function applyTogetherProviderConfig(cfg: OpenClawConfig): OpenClawConfig {
-  const models = { ...cfg.agents?.defaults?.models };
-  models[TOGETHER_DEFAULT_MODEL_REF] = {
-    ...models[TOGETHER_DEFAULT_MODEL_REF],
-    alias: models[TOGETHER_DEFAULT_MODEL_REF]?.alias ?? "Together AI",
-  };
-
-  return applyProviderConfigWithModelCatalog(cfg, {
-    agentModels: models,
+const togetherPreset = {
+  primaryModelRef: TOGETHER_DEFAULT_MODEL_REF,
+  resolveParams: () => ({
     providerId: "together",
     api: "openai-completions",
     baseUrl: TOGETHER_BASE_URL,
-    catalogModels: TOGETHER_MODEL_CATALOG.map(buildTogetherModelDefinition),
-  });
-}
+    catalogModels: TOGETHER_MODEL_CATALOG,
+    aliases: [{ modelRef: TOGETHER_DEFAULT_MODEL_REF, alias: "Together AI" }],
+  }),
+} satisfies Parameters<typeof createProviderConnectionPresetAppliers<[]>>[0];
 
-export function applyTogetherConfig(cfg: OpenClawConfig): OpenClawConfig {
-  return applyAgentDefaultModelPrimary(
-    applyTogetherProviderConfig(cfg),
-    TOGETHER_DEFAULT_MODEL_REF,
-  );
-}
+export const { applyConfig: applyTogetherConfig } =
+  createModelCatalogPresetAppliers(togetherPreset);
+export const { applyConfig: applyTogetherConnectionConfig } =
+  createProviderConnectionPresetAppliers(togetherPreset);

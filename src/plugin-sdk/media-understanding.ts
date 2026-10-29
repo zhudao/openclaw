@@ -1,6 +1,5 @@
-// Public media-understanding helpers and types for provider plugins.
-
 export type {
+  AudioTranscriptionConfigContext,
   AudioTranscriptionRequest,
   AudioTranscriptionResult,
   ImageDescriptionRequest,
@@ -9,19 +8,30 @@ export type {
   ImagesDescriptionRequest,
   ImagesDescriptionResult,
   MediaUnderstandingProvider,
+  MediaUnderstandingProviderAuthContext,
+  MediaUnderstandingProviderAuthResult,
+  MediaUnderstandingProviderRequestAuth,
+  MediaUnderstandingProviderSyntheticAuthResult,
+  StructuredExtractionImageInput,
+  StructuredExtractionInput,
+  StructuredExtractionRequest,
+  StructuredExtractionResult,
+  StructuredExtractionTextInput,
   VideoDescriptionRequest,
   VideoDescriptionResult,
 } from "../media-understanding/types.js";
 
 export {
   describeImageWithModel,
+  describeImageWithModelPayloadTransform,
   describeImagesWithModel,
-} from "../media-understanding/providers/image.js";
-export { transcribeOpenAiCompatibleAudio } from "../media-understanding/providers/openai-compatible-audio.js";
+  describeImagesWithModelPayloadTransform,
+} from "../media-understanding/image-runtime.js";
 export {
-  assertOkOrThrowHttpError,
-  normalizeBaseUrl,
-  postJsonRequest,
-  postTranscriptionRequest,
-  requireTranscriptionText,
-} from "../media-understanding/providers/shared.js";
+  buildOpenAiCompatibleVideoRequestBody,
+  coerceOpenAiCompatibleVideoText,
+  describeOpenAiCompatibleVideo,
+  resolveMediaUnderstandingString,
+  type OpenAiCompatibleVideoPayload,
+} from "../media-understanding/openai-compatible-video.ts";
+export { transcribeOpenAiCompatibleAudio } from "../media-understanding/openai-compatible-audio.js";

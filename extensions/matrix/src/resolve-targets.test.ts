@@ -1,21 +1,32 @@
-import type { ChannelDirectoryEntry } from "openclaw/plugin-sdk/matrix";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChannelDirectoryEntry } from "../runtime-api.js";
+import { matrixPlugin } from "./channel.js";
 import { listMatrixDirectoryGroupsLive, listMatrixDirectoryPeersLive } from "./directory-live.js";
-import { resolveMatrixTargets } from "./resolve-targets.js";
 
 vi.mock("./directory-live.js", () => ({
   listMatrixDirectoryPeersLive: vi.fn(),
   listMatrixDirectoryGroupsLive: vi.fn(),
 }));
 
-async function resolveUserTarget(input = "Alice") {
-  const [result] = await resolveMatrixTargets({
+const resolveTargets = expectDefined(matrixPlugin.resolver?.resolveTargets, "Matrix resolver");
+function resolve(kind: "user" | "group", inputs: string[], accountId?: string) {
+  return resolveTargets({
     cfg: {},
-    inputs: [input],
-    kind: "user",
+    inputs,
+    kind,
+    accountId,
+    runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
   });
-  return result;
 }
+const user: ChannelDirectoryEntry = { kind: "user", id: "@alice:example.org", name: "Alice" };
+const group: ChannelDirectoryEntry = {
+  kind: "group",
+  id: "!team:example.org",
+  name: "Team",
+  handle: "#team",
+};
+const partial: ChannelDirectoryEntry = { kind: "group", id: "!one:example.org", name: "General" };
 
 describe("resolveMatrixTargets (users)", () => {
   beforeEach(() => {
@@ -23,46 +34,49 @@ describe("resolveMatrixTargets (users)", () => {
     vi.mocked(listMatrixDirectoryGroupsLive).mockReset();
   });
 
-  it("resolves exact unique display name matches", async () => {
-    const matches: ChannelDirectoryEntry[] = [
-      { kind: "user", id: "@alice:example.org", name: "Alice" },
-    ];
-    vi.mocked(listMatrixDirectoryPeersLive).mockResolvedValue(matches);
-
-    const result = await resolveUserTarget();
-
-    expect(result?.resolved).toBe(true);
-    expect(result?.id).toBe("@alice:example.org");
-  });
-
   it("does not resolve ambiguous or non-exact matches", async () => {
-    const matches: ChannelDirectoryEntry[] = [
-      { kind: "user", id: "@alice:example.org", name: "Alice" },
-      { kind: "user", id: "@alice:evil.example", name: "Alice" },
-    ];
-    vi.mocked(listMatrixDirectoryPeersLive).mockResolvedValue(matches);
+    vi.mocked(listMatrixDirectoryPeersLive).mockResolvedValue([
+      user,
+      { ...user, id: "@alice:evil.example" },
+    ]);
 
-    const result = await resolveUserTarget();
+    const [result] = await resolve("user", ["Alice"]);
 
-    expect(result?.resolved).toBe(false);
-    expect(result?.note).toMatch(/use full Matrix ID/i);
+    expect(result).toMatchObject({
+      resolved: false,
+      note: expect.stringMatching(/use full Matrix ID/i),
+    });
   });
 
-  it("prefers exact group matches over first partial result", async () => {
-    const matches: ChannelDirectoryEntry[] = [
-      { kind: "group", id: "!one:example.org", name: "General", handle: "#general" },
-      { kind: "group", id: "!two:example.org", name: "Team", handle: "#team" },
-    ];
-    vi.mocked(listMatrixDirectoryGroupsLive).mockResolvedValue(matches);
+  it.each([
+    ["user", listMatrixDirectoryPeersLive, user, ["Alice", " alice "]],
+    ["group", listMatrixDirectoryGroupsLive, group, ["#team", "#team"]],
+  ] as const)("caches exact %s matches", async (kind, lookup, match, inputs) => {
+    vi.mocked(lookup).mockResolvedValue(kind === "group" ? [partial, match] : [match]);
+    expect(await resolve(kind, [...inputs], "ops")).toEqual(
+      inputs.map((input) => ({
+        input,
+        resolved: true,
+        id: match.id,
+        name: match.name,
+        note: undefined,
+      })),
+    );
+    expect(lookup).toHaveBeenCalledWith(expect.objectContaining({ accountId: "ops" }));
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
 
-    const [result] = await resolveMatrixTargets({
-      cfg: {},
-      inputs: ["#team"],
-      kind: "group",
-    });
+  it("accepts prefixed fully qualified ids without directory lookups", async () => {
+    const userResults = await resolve("user", ["matrix:user:@alice:example.org"]);
+    const groupResults = await resolve("group", ["matrix:room:!team:example.org"]);
 
-    expect(result?.resolved).toBe(true);
-    expect(result?.id).toBe("!two:example.org");
-    expect(result?.note).toBe("multiple matches; chose first");
+    expect(userResults).toEqual([
+      { input: "matrix:user:@alice:example.org", resolved: true, id: "@alice:example.org" },
+    ]);
+    expect(groupResults).toEqual([
+      { input: "matrix:room:!team:example.org", resolved: true, id: "!team:example.org" },
+    ]);
+    expect(listMatrixDirectoryPeersLive).not.toHaveBeenCalled();
+    expect(listMatrixDirectoryGroupsLive).not.toHaveBeenCalled();
   });
 });

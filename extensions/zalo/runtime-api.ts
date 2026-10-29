@@ -1,1 +1,1 @@
-export * from "openclaw/plugin-sdk/zalo";
+export { setZaloRuntime } from "./src/runtime.js";

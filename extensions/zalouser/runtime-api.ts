@@ -1,1 +1,1 @@
-export * from "openclaw/plugin-sdk/zalouser";
+export { setZalouserRuntime } from "./src/runtime.js";

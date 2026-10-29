@@ -1,77 +1,82 @@
+import { describeAccountSnapshot } from "openclaw/plugin-sdk/account-helpers";
 import {
-  collectAllowlistProviderRestrictSendersWarnings,
+  adaptScopedAccountAccessor,
   createScopedChannelConfigAdapter,
-  createScopedDmSecurityResolver,
 } from "openclaw/plugin-sdk/channel-config-helpers";
-import { createChannelPluginBase } from "openclaw/plugin-sdk/core";
+import { createRestrictSendersChannelSecurity } from "openclaw/plugin-sdk/channel-policy";
+import { createChannelPluginBase, getChatChannelMeta } from "openclaw/plugin-sdk/core";
+import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
+import { normalizeStringifiedEntries } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { normalizeE164 } from "openclaw/plugin-sdk/text-utility-runtime";
 import {
   listSignalAccountIds,
   resolveDefaultSignalAccountId,
   resolveSignalAccount,
   type ResolvedSignalAccount,
 } from "./accounts.js";
-import {
-  buildChannelConfigSchema,
-  getChatChannelMeta,
-  normalizeE164,
-  SignalConfigSchema,
-  type ChannelPlugin,
-} from "./runtime-api.js";
+import { resolveSignalTarget } from "./aliases.js";
+import { SignalChannelConfigSchema } from "./config-schema.js";
+import { signalDoctor } from "./doctor.js";
 import { createSignalSetupWizardProxy } from "./setup-core.js";
 
-export const SIGNAL_CHANNEL = "signal" as const;
-
-async function loadSignalChannelRuntime() {
-  return await import("./channel.runtime.js");
-}
+const SIGNAL_CHANNEL = "signal" as const;
 
 export const signalSetupWizard = createSignalSetupWizardProxy(
-  async () => (await loadSignalChannelRuntime()).signalSetupWizard,
+  async () => (await import("./setup-surface.js")).signalSetupWizard,
 );
 
-export const signalConfigAdapter = createScopedChannelConfigAdapter<ResolvedSignalAccount>({
+const signalConfigAdapterBase = createScopedChannelConfigAdapter<ResolvedSignalAccount>({
   sectionKey: SIGNAL_CHANNEL,
   listAccountIds: listSignalAccountIds,
-  resolveAccount: (cfg, accountId) => resolveSignalAccount({ cfg, accountId }),
+  resolveAccount: adaptScopedAccountAccessor(resolveSignalAccount),
   defaultAccountId: resolveDefaultSignalAccountId,
-  clearBaseFields: ["account", "httpUrl", "httpHost", "httpPort", "cliPath", "name"],
+  clearBaseFields: ["account", "accountUuid", "transport", "name"],
   resolveAllowFrom: (account: ResolvedSignalAccount) => account.config.allowFrom,
   formatAllowFrom: (allowFrom) =>
-    allowFrom
-      .map((entry) => String(entry).trim())
-      .filter(Boolean)
+    normalizeStringifiedEntries(allowFrom)
       .map((entry) => (entry === "*" ? "*" : normalizeE164(entry.replace(/^signal:/i, ""))))
       .filter(Boolean),
-  resolveDefaultTo: (account: ResolvedSignalAccount) => account.config.defaultTo,
 });
 
-export const signalResolveDmPolicy = createScopedDmSecurityResolver<ResolvedSignalAccount>({
+export const signalConfigAdapter = {
+  ...signalConfigAdapterBase,
+  resolveDefaultTo({
+    cfg,
+    accountId,
+  }: {
+    cfg: Parameters<typeof resolveSignalAccount>[0]["cfg"];
+    accountId?: string | null;
+  }) {
+    const raw = resolveSignalAccount({ cfg, accountId }).config.defaultTo?.trim();
+    if (!raw) {
+      return undefined;
+    }
+    try {
+      return resolveSignalTarget({ cfg, accountId, input: raw })?.to ?? raw;
+    } catch {
+      return raw;
+    }
+  },
+};
+
+export const signalSecurityAdapter = createRestrictSendersChannelSecurity<ResolvedSignalAccount>({
   channelKey: SIGNAL_CHANNEL,
-  resolvePolicy: (account) => account.config.dmPolicy,
-  resolveAllowFrom: (account) => account.config.allowFrom,
+  resolveDmPolicy: (account) => account.config.dmPolicy,
+  resolveDmAllowFrom: (account) => account.config.allowFrom,
+  resolveGroupPolicy: (account) => account.config.groupPolicy,
+  surface: "Signal groups",
+  openScope: "any member",
+  groupPolicyPath: "channels.signal.groupPolicy",
+  groupAllowFromPath: "channels.signal.groupAllowFrom",
+  mentionGated: false,
+  findingTitle: "Signal security warning",
   policyPathSuffix: "dmPolicy",
-  normalizeEntry: (raw) => normalizeE164(raw.replace(/^signal:/i, "").trim()),
+  normalizeDmEntry: (raw) => normalizeE164(raw.replace(/^signal:/i, "").trim()),
 });
-
-export function collectSignalSecurityWarnings(params: {
-  account: ResolvedSignalAccount;
-  cfg: Parameters<typeof resolveSignalAccount>[0]["cfg"];
-}) {
-  return collectAllowlistProviderRestrictSendersWarnings({
-    cfg: params.cfg,
-    providerConfigPresent: params.cfg.channels?.signal !== undefined,
-    configuredGroupPolicy: params.account.config.groupPolicy,
-    surface: "Signal groups",
-    openScope: "any member",
-    groupPolicyPath: "channels.signal.groupPolicy",
-    groupAllowFromPath: "channels.signal.groupAllowFrom",
-    mentionGated: false,
-  });
-}
 
 export function createSignalPluginBase(params: {
   setupWizard?: NonNullable<ChannelPlugin<ResolvedSignalAccount>["setupWizard"]>;
-  setup: NonNullable<ChannelPlugin<ResolvedSignalAccount>["setup"]>;
+  setupContract: NonNullable<ChannelPlugin<ResolvedSignalAccount>["setupContract"]>;
 }): Pick<
   ChannelPlugin<ResolvedSignalAccount>,
   | "id"
@@ -83,51 +88,49 @@ export function createSignalPluginBase(params: {
   | "configSchema"
   | "config"
   | "security"
-  | "setup"
+  | "setupContract"
+  | "messaging"
+  | "doctor"
 > {
-  return createChannelPluginBase({
+  const base = createChannelPluginBase<ResolvedSignalAccount>({
     id: SIGNAL_CHANNEL,
     meta: {
       ...getChatChannelMeta(SIGNAL_CHANNEL),
     },
     setupWizard: params.setupWizard,
+    streaming: {
+      blockStreamingCoalesceDefaults: { minChars: 1500, idleMs: 1000 },
+    },
+    reload: {
+      configPrefixes: ["channels.signal"],
+      noopPrefixes: ["messages.inbound", "messages.ackReactionScope"],
+    },
+    configSchema: SignalChannelConfigSchema,
+    doctor: signalDoctor,
+    security: signalSecurityAdapter,
+    setupContract: params.setupContract,
+  });
+  return {
+    ...base,
     capabilities: {
       chatTypes: ["direct", "group"],
       media: true,
       reactions: true,
     },
-    streaming: {
-      blockStreamingCoalesceDefaults: { minChars: 1500, idleMs: 1000 },
-    },
-    reload: { configPrefixes: ["channels.signal"] },
-    configSchema: buildChannelConfigSchema(SignalConfigSchema),
     config: {
       ...signalConfigAdapter,
       isConfigured: (account) => account.configured,
-      describeAccount: (account) => ({
-        accountId: account.accountId,
-        name: account.name,
-        enabled: account.enabled,
-        configured: account.configured,
-        baseUrl: account.baseUrl,
-      }),
+      describeAccount: (account) =>
+        describeAccountSnapshot({
+          account,
+          configured: account.configured,
+          extra: {
+            baseUrl: account.baseUrl,
+          },
+        }),
     },
-    security: {
-      resolveDmPolicy: signalResolveDmPolicy,
-      collectWarnings: collectSignalSecurityWarnings,
+    messaging: {
+      defaultMarkdownTableMode: "bullets",
     },
-    setup: params.setup,
-  }) as Pick<
-    ChannelPlugin<ResolvedSignalAccount>,
-    | "id"
-    | "meta"
-    | "setupWizard"
-    | "capabilities"
-    | "streaming"
-    | "reload"
-    | "configSchema"
-    | "config"
-    | "security"
-    | "setup"
-  >;
+  };
 }

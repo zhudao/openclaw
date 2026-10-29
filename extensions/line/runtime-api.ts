@@ -1,1 +1,1 @@
-export * from "openclaw/plugin-sdk/line-core";
+export { setLineRuntime } from "./src/runtime.js";

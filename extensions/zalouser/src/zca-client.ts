@@ -1,67 +1,19 @@
-import * as zcaJsRuntime from "zca-js";
+import { createRequire } from "node:module";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
+import { fetchWithZaloSendContext } from "./send-context.js";
+import type { ZaloEventMessage } from "./types.js";
 
-const zcaJs = zcaJsRuntime as unknown as {
-  ThreadType: unknown;
-  LoginQRCallbackEventType: unknown;
-  Reactions: unknown;
-  Zalo: unknown;
-};
+type ZcaJsRuntime = { Zalo: ZaloCtor };
 
-export const ThreadType = zcaJs.ThreadType as {
-  User: 0;
-  Group: 1;
-};
+const require = createRequire(import.meta.url);
 
-export const LoginQRCallbackEventType = zcaJs.LoginQRCallbackEventType as {
-  QRCodeGenerated: 0;
-  QRCodeExpired: 1;
-  QRCodeScanned: 2;
-  QRCodeDeclined: 3;
-  GotLoginInfo: 4;
-};
-
-export const Reactions = zcaJs.Reactions as Record<string, string> & {
-  HEART: string;
-  LIKE: string;
-  HAHA: string;
-  WOW: string;
-  CRY: string;
-  ANGRY: string;
-  NONE: string;
-};
-
-// Mirror zca-js sendMessage style constants locally because the package root
-// typing surface does not consistently expose TextStyle/Style to tsgo.
-export const TextStyle = {
-  Bold: "b",
-  Italic: "i",
-  Underline: "u",
-  StrikeThrough: "s",
-  Red: "c_db342e",
-  Orange: "c_f27806",
-  Yellow: "c_f7b503",
-  Green: "c_15a85f",
-  Small: "f_13",
-  Big: "f_18",
-  UnorderedList: "lst_1",
-  OrderedList: "lst_2",
-  Indent: "ind_$",
-} as const;
-
-type TextStyleValue = (typeof TextStyle)[keyof typeof TextStyle];
-
-export type Style =
-  | {
-      start: number;
-      len: number;
-      st: Exclude<TextStyleValue, typeof TextStyle.Indent>;
-    }
-  | {
-      start: number;
-      len: number;
-      st: typeof TextStyle.Indent;
-      indentSize?: number;
-    };
+// Keep zca-js behind a runtime boundary so bundled metadata/contracts can load
+// without resolving its optional WebSocket dependency tree. Its CommonJS export
+// supports tough-cookie 6; the ESM export still imports the removed default.
+const loadZcaJsRuntime = createLazyRuntimeModule(async () => {
+  const runtime: unknown = require("zca-js");
+  return runtime as ZcaJsRuntime;
+});
 
 export type Credentials = {
   imei: string;
@@ -98,6 +50,11 @@ export type Message = {
   data: Record<string, unknown>;
 };
 
+type LoginQRActions = {
+  retry: () => unknown;
+  abort: () => unknown;
+};
+
 export type LoginQRCallbackEvent =
   | {
       type: 0;
@@ -105,19 +62,12 @@ export type LoginQRCallbackEvent =
         code: string;
         image: string;
       };
-      actions: {
-        saveToFile: (qrPath?: string) => Promise<unknown>;
-        retry: () => unknown;
-        abort: () => unknown;
-      };
+      actions: LoginQRActions & { saveToFile: (qrPath?: string) => Promise<unknown> };
     }
   | {
       type: 1;
       data: null;
-      actions: {
-        retry: () => unknown;
-        abort: () => unknown;
-      };
+      actions: LoginQRActions;
     }
   | {
       type: 2;
@@ -125,20 +75,14 @@ export type LoginQRCallbackEvent =
         avatar: string;
         display_name: string;
       };
-      actions: {
-        retry: () => unknown;
-        abort: () => unknown;
-      };
+      actions: LoginQRActions;
     }
   | {
       type: 3;
       data: {
         code: string;
       };
-      actions: {
-        retry: () => unknown;
-        abort: () => unknown;
-      };
+      actions: LoginQRActions;
     }
   | {
       type: 4;
@@ -150,10 +94,12 @@ export type LoginQRCallbackEvent =
       actions: null;
     };
 
-export type Listener = {
+type Listener = {
+  on(event: "connected", callback: () => void): void;
   on(event: "message", callback: (message: Message) => void): void;
   on(event: "error", callback: (error: unknown) => void): void;
   on(event: "closed", callback: (code: number, reason: string) => void): void;
+  off(event: "connected", callback: () => void): void;
   off(event: "message", callback: (message: Message) => void): void;
   off(event: "error", callback: (error: unknown) => void): void;
   off(event: "closed", callback: (code: number, reason: string) => void): void;
@@ -161,19 +107,17 @@ export type Listener = {
   stop(): void;
 };
 
-type DeliveryEventMessage = {
-  msgId: string;
-  cliMsgId: string;
-  uidFrom: string;
-  idTo: string;
-  msgType: string;
-  st: number;
-  at: number;
-  cmd: number;
-  ts: string | number;
-};
-
-type DeliveryEventMessages = DeliveryEventMessage | DeliveryEventMessage[];
+type AttachmentSource =
+  | string
+  | {
+      data: Buffer;
+      filename: `${string}.${string}`;
+      metadata: {
+        totalSize: number;
+        width?: number;
+        height?: number;
+      };
+    };
 
 export type API = {
   listener: Listener;
@@ -217,29 +161,7 @@ export type API = {
     attachment?: Array<{ msgId?: string | number }>;
   }>;
   uploadAttachment(
-    sources:
-      | string
-      | {
-          data: Buffer;
-          filename: `${string}.${string}`;
-          metadata: {
-            totalSize: number;
-            width?: number;
-            height?: number;
-          };
-        }
-      | Array<
-          | string
-          | {
-              data: Buffer;
-              filename: `${string}.${string}`;
-              metadata: {
-                totalSize: number;
-                width?: number;
-                height?: number;
-              };
-            }
-        >,
+    sources: AttachmentSource | AttachmentSource[],
     threadId: string,
     type?: number,
   ): Promise<
@@ -278,13 +200,17 @@ export type API = {
   ): Promise<unknown>;
   sendDeliveredEvent(
     isSeen: boolean,
-    messages: DeliveryEventMessages,
+    messages: ZaloEventMessage | ZaloEventMessage[],
     type?: number,
   ): Promise<unknown>;
-  sendSeenEvent(messages: DeliveryEventMessages, type?: number): Promise<unknown>;
+  sendSeenEvent(messages: ZaloEventMessage | ZaloEventMessage[], type?: number): Promise<unknown>;
 };
 
-type ZaloCtor = new (options?: { logging?: boolean; selfListen?: boolean }) => {
+type ZaloCtor = new (options?: {
+  logging?: boolean;
+  selfListen?: boolean;
+  polyfill?: typeof fetch;
+}) => {
   login(credentials: Credentials): Promise<API>;
   loginQR(
     options?: { userAgent?: string; language?: string; qrPath?: string },
@@ -292,4 +218,7 @@ type ZaloCtor = new (options?: { logging?: boolean; selfListen?: boolean }) => {
   ): Promise<API>;
 };
 
-export const Zalo = zcaJs.Zalo as unknown as ZaloCtor;
+export async function createZalo(): Promise<InstanceType<ZaloCtor>> {
+  const { Zalo } = await loadZcaJsRuntime();
+  return new Zalo({ logging: false, selfListen: false, polyfill: fetchWithZaloSendContext });
+}

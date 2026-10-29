@@ -1,4 +1,8 @@
-import { definePluginEntry } from "openclaw/plugin-sdk/core";
+/**
+ * Brave Search plugin entry. It registers the Brave web-search provider and
+ * keeps runtime HTTP execution lazy.
+ */
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createBraveWebSearchProvider } from "./src/brave-web-search-provider.js";
 
 export default definePluginEntry({

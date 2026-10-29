@@ -1,13 +1,10 @@
 import {
-  buildExecRemoteCommand,
   createSshSandboxSessionFromConfigText,
   runPluginCommandWithTimeout,
   shellEscape,
   type SshSandboxSession,
 } from "openclaw/plugin-sdk/sandbox";
 import type { ResolvedOpenShellPluginConfig } from "./config.js";
-
-export { buildExecRemoteCommand, shellEscape } from "openclaw/plugin-sdk/sandbox";
 
 export type OpenShellExecContext = {
   config: ResolvedOpenShellPluginConfig;
@@ -23,11 +20,29 @@ export function buildOpenShellBaseArgv(config: ResolvedOpenShellPluginConfig): s
   if (config.gatewayEndpoint) {
     argv.push("--gateway-endpoint", config.gatewayEndpoint);
   }
+  if (config.workspace) {
+    argv.push("--workspace", config.workspace);
+  }
   return argv;
 }
 
-export function buildRemoteCommand(argv: string[]): string {
-  return argv.map((entry) => shellEscape(entry)).join(" ");
+function applyGatewayEndpointToSshConfig(params: {
+  configText: string;
+  gatewayEndpoint?: string;
+}): string {
+  const endpoint = params.gatewayEndpoint?.trim();
+  if (!endpoint) {
+    return params.configText;
+  }
+  return params.configText.replace(/^(\s*ProxyCommand\s+)(.*)$/m, (line, prefix, command) => {
+    if (!command.includes("ssh-proxy")) {
+      return line;
+    }
+    if (/(^|\s)--server(\s|=)|(^|\s)--gateway-endpoint(\s|=)/.test(command)) {
+      return line;
+    }
+    return `${prefix}${command} --server ${shellEscape(endpoint)}`;
+  });
 }
 
 export async function runOpenShellCli(params: {
@@ -55,6 +70,9 @@ export async function createOpenShellSshSession(params: {
     throw new Error(result.stderr.trim() || "openshell sandbox ssh-config failed");
   }
   return await createSshSandboxSessionFromConfigText({
-    configText: result.stdout,
+    configText: applyGatewayEndpointToSshConfig({
+      configText: result.stdout,
+      gatewayEndpoint: params.context.config.gatewayEndpoint,
+    }),
   });
 }
