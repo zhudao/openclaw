@@ -67,6 +67,7 @@ const { values } = parseArgs({
     pairs: { type: "string", default: "1" },
     trace: { type: "boolean", default: false },
     "cpu-only": { type: "boolean", default: false },
+    "cpu-throttle": { type: "string", default: "1" },
   },
 });
 const pairs = Number(values.pairs);
@@ -76,6 +77,15 @@ const engines: ControlUiEngine[] = values.engines.split(",").map((name) => {
   }
   return name;
 });
+const cpuThrottle = Number(values["cpu-throttle"]);
+if (!Number.isFinite(cpuThrottle) || cpuThrottle < 1) {
+  throw new Error("cpu-throttle must be at least 1");
+}
+if (cpuThrottle !== 1 && engines.includes("webkit")) {
+  throw new Error(
+    "WebKit does not expose CPU throttling; use --engines chromium for throttled runs",
+  );
+}
 const networkProfiles = values["network-profiles"].split(",").map((name) => {
   if (name !== "localhost" && name !== "rtt-100ms") {
     throw new Error(`Unsupported network profile: ${name}`);
@@ -92,6 +102,11 @@ if (!Number.isInteger(pairs) || pairs < 1 || new Set(engines).size !== engines.l
 }
 if (!["desktop", "mobile", "both"].includes(values.viewport)) {
   throw new Error("Invalid viewport");
+}
+if (values.steps?.split(",").includes("streaming-mixed-fast") && values.viewport !== "desktop") {
+  throw new Error(
+    "streaming-mixed-fast requires --viewport desktop: concurrent composer and sidebar input needs non-modal navigation",
+  );
 }
 if (values["control-bundle-dir"]?.length && !values["compare-bundle-dir"]) {
   throw new Error("--control-bundle-dir requires --compare-bundle-dir");
@@ -182,6 +197,8 @@ type Observation = {
   pair: number;
   status: "passed" | "failed";
   wallMs?: number;
+  prepareFrameIntervalMs?: number;
+  settleFrameIntervalMs?: number;
   hostLoadAverage: number[];
   metrics?: EngineMetrics;
   requests?: Record<string, number>;
@@ -283,6 +300,10 @@ try {
           "./bench-control-ui-engines.ts",
           "./lib/control-ui-engine-metrics.ts",
           "./lib/control-ui-engine-boot-scenarios.ts",
+          "./lib/control-ui-engine-streaming-scenarios.ts",
+          "./lib/control-ui-streaming-reply.ts",
+          "./lib/control-ui-streaming-fixture.ts",
+          "./lib/control-ui-streaming-statistics.ts",
           "./lib/control-ui-engine-memory.ts",
           "./lib/control-ui-engine-memory-scenarios.ts",
           "./lib/control-ui-engine-plugin-memory-scenarios.ts",
@@ -310,6 +331,7 @@ try {
     networkProfiles,
     trace: values.trace,
     cpuOnly: values["cpu-only"],
+    cpuThrottle,
     collection: values.trace
       ? "Playwright tracing and engine Inspector/Profiler; overhead included"
       : values["cpu-only"]
@@ -318,17 +340,20 @@ try {
     order:
       "Serial network profile, engine and bundle order alternates each pair; fresh browser context per observation",
     acceptance:
-      "Census ranks >1.5x WebKit/Chromium. Fix proof: ten interleaved pairs plus A/A control; median regression <=5% and p95 no worse, otherwise ten more pairs. Profile/CPU and structural counts decide on a noisy host; >20% attributable regression blocks.",
+      "Census ranks >1.3x WebKit/Chromium. Fix proof: ten interleaved pairs plus A/A control; median regression <=5% and p95 no worse, otherwise ten more pairs. Profile/CPU and structural counts decide on a noisy host; >20% attributable regression blocks.",
+    frameCadence:
+      "Prepare and settle frame intervals are consecutive requestAnimationFrame timestamp differences from the existing two-frame waits. They are cadence diagnostics, not the full wait duration, and must not be subtracted from wall time.",
     boundary:
       "Production bundle and HTTP owner; synthetic Gateway. Cold means fresh context; warm means same-context document reload. Mock routing disables HTTP cache in both engines. Nonlocal profiles add the configured delay to every HTTP request and every incoming mock Gateway frame (including the connect challenge); RPC replies thus include a simulated round trip, with no added throughput cap. Mobile transcript-top uses a native scrollport jump, not wheel input. No live Gateway/provider latency.",
     memoryContract:
       "Opt-in memory-* scenes retain one document, drain 4.1 s retirement timers, clear synthetic request history, then force two collections at each named checkpoint. Compare warm and late checkpoints; heap/native categories/RSS and DOM wrapper/native counts have different engine-specific meanings. Memory-scene elapsed times include forced GC and snapshots and are not latency evidence.",
-    scenarios: scenarios.map(({ id, route, expected, navigation, memory }) => ({
+    scenarios: scenarios.map(({ id, route, expected, navigation, memory, diagnostic }) => ({
       id,
       route,
       expected,
       navigation,
       memory,
+      diagnostic,
     })),
   });
   for (const viewport of viewports) {
@@ -381,7 +406,12 @@ try {
             let tracingStarted = false;
             let measurement: Awaited<ReturnType<typeof startEngineMeasurement>> | undefined;
             let memory: Awaited<ReturnType<typeof createEngineMemoryCollector>> | undefined;
+            let throttle: Awaited<ReturnType<typeof context.newCDPSession>> | undefined;
             try {
+              if (cpuThrottle !== 1) {
+                throttle = await context.newCDPSession(page);
+                await throttle.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
+              }
               await page.addInitScript("globalThis.__name = (fn) => fn");
               await page.addInitScript(installInteractionNavigationPreloadObserver);
               if (scenario.memory) {
@@ -487,7 +517,7 @@ try {
                 observation.navigationPreloads = await settleInteractionNavigationPreloads(page);
                 await page.waitForLoadState("networkidle");
                 await page.evaluate(() => document.fonts.ready.then(() => undefined));
-                await frames(page);
+                observation.prepareFrameIntervalMs = await frames(page);
               }
               const before = (await gateway.getRequests()).length;
               if (values.trace) {
@@ -560,7 +590,7 @@ try {
                       }
                     : undefined,
                 )) ?? undefined;
-              await frames(page);
+              observation.settleFrameIntervalMs = await frames(page);
               observation.wallMs = performance.now() - start;
               const activeMeasurement = measurement;
               measurement = undefined;
@@ -599,6 +629,14 @@ try {
                     await measurement.stop(),
                   );
                 }
+                if (scenario.id.startsWith("streaming-")) {
+                  const streaming = await page.evaluate(() =>
+                    Reflect.get(window, "__engineStreamingResult"),
+                  );
+                  if (streaming) {
+                    await writeJson(`${artifactPrefix}.streaming.json`, streaming);
+                  }
+                }
                 if (pair === 0 || observation.status === "failed") {
                   await page.screenshot({ path: path.join(artifactDir, `${artifactPrefix}.png`) });
                 }
@@ -612,6 +650,7 @@ try {
                 observation.status = "failed";
               }
               try {
+                await throttle?.detach();
                 await context.close();
                 if (scenario.memory) {
                   observation.retiredProcess = processMemory(observationBrowser);
@@ -697,6 +736,8 @@ const summary = [...cells.values()].map((cell) => {
     failed: rows.length - passing.length,
     measured: measured.length,
     wallMs: distribution(measured.map((row) => row.wallMs!)),
+    prepareFrameIntervalMs: distribution(rows.flatMap((row) => row.prepareFrameIntervalMs ?? [])),
+    settleFrameIntervalMs: distribution(rows.flatMap((row) => row.settleFrameIntervalMs ?? [])),
     evidence: Object.fromEntries(
       [...new Set(measured.flatMap((row) => Object.keys(row.evidence ?? {})))].map((key) => [
         key,
