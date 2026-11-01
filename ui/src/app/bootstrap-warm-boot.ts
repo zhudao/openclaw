@@ -168,6 +168,11 @@ export function subscribeBootRecordPersistence(
   { gateway, agents, sessions }: Pick<ApplicationContext, "gateway" | "agents" | "sessions">,
   initialRecord: BootRecord | null,
 ) {
+  type RecordInputs = Omit<BootRecord, "savedAt" | "groups" | "sectionOrder"> & {
+    groups: readonly BootRecord["groups"][number][];
+    sectionOrder: readonly string[];
+  };
+  let lastInputs: RecordInputs | undefined;
   const connectionRevision = gateway.connectionRevision;
   let routingDefaults = initialRecord
     ? {
@@ -178,11 +183,13 @@ export function subscribeBootRecordPersistence(
     : null;
   const persistLiveBootRecord = () => {
     if (gateway.snapshot.phase !== "connected" || gateway.snapshot.client?.offlineRecoveryRetired) {
+      lastInputs = undefined;
       return;
     }
     const scope = gatewayCredentialScope(gateway.connection.gatewayUrl);
     const auth = resolveBootRecordAuth(gateway.snapshot.hello?.auth, gateway.connection.token);
     if (!auth) {
+      lastInputs = undefined;
       return;
     }
     const agentsList = agents.state.agentsList;
@@ -201,19 +208,40 @@ export function subscribeBootRecordPersistence(
       sessions.groupsStatus() === "ready" &&
       gateway.snapshot.selfUser !== undefined
     ) {
-      persistBootRecord({
+      const inputs: RecordInputs = {
         version: 2,
         recoveryScope: gateway.snapshot.client?.recoveryScopeReady
           ? gateway.snapshot.client.recoveryScope
           : gateway.snapshot.hello?.auth?.recoveryScope,
         ...auth,
-        savedAt: Date.now(),
         scope,
         profileId: gateway.snapshot.selfUser?.id ?? null,
         agents: agentsList,
-        groups: [...sessions.state.groupSettings],
-        sectionOrder: [...sessions.state.sectionOrder],
+        groups: sessions.state.groupSettings,
+        sectionOrder: sessions.state.sectionOrder,
+      };
+      // Only boot inputs may postpone the write, not row or unrelated Gateway publications.
+      if (
+        lastInputs?.scope === inputs.scope &&
+        lastInputs.recoveryScope === inputs.recoveryScope &&
+        lastInputs.authMethod === inputs.authMethod &&
+        lastInputs.credential === inputs.credential &&
+        lastInputs.profileId === inputs.profileId &&
+        lastInputs.agents === inputs.agents &&
+        lastInputs.groups === inputs.groups &&
+        lastInputs.sectionOrder === inputs.sectionOrder
+      ) {
+        return;
+      }
+      lastInputs = inputs;
+      persistBootRecord({
+        ...inputs,
+        savedAt: Date.now(),
+        groups: [...inputs.groups],
+        sectionOrder: [...inputs.sectionOrder],
       });
+    } else {
+      lastInputs = undefined;
     }
   };
   // Persist admitted owner snapshots independently of mounted views.
