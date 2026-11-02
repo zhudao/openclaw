@@ -882,7 +882,6 @@ extensions/zalouser/src/zalo-js.ts	7
 extensions/zalouser/src/zca-client.ts	1
 packages/acp-core/src/runtime/errors.ts	5
 packages/agent-core/src/harness/compaction/branch-summarization.ts	1
-packages/agent-core/src/harness/compaction/compaction.ts	1
 packages/agent-core/src/harness/session/uuid.ts	1
 packages/agent-core/src/harness/utils/truncate.ts	1
 packages/agent-core/src/turn-interruption.ts	1
@@ -1171,7 +1170,7 @@ src/agents/lazy-process-tool.ts	1
 src/agents/live-cache-regression-policy.ts	2
 src/agents/mcp-auth-profile.ts	1
 src/agents/mcp-http-fetch.ts	3
-src/agents/mcp-json-schema-validator.ts	4
+src/agents/mcp-json-schema-validator.ts	3
 src/agents/mcp-transport-config.ts	1
 src/agents/mcp-transport.ts	2
 src/agents/mcp-ui-resource.ts	2

@@ -90,6 +90,28 @@ The migration also leaves lists absent when the effective account, channel, or
 global-default `groupPolicy` disables groups. Explicit policy overrides still
 apply. Update-time Doctor repair follows the same rules.
 
+## Copied model allowlists
+
+Older configs used `agents.defaults.models` as both per-model settings and the
+model allowlist. The config migration copies those keys into
+`agents.defaults.modelPolicy.allow` so existing restrictions stay in force, but
+the copied exact list also hides every model added later.
+
+When an allowlist (default or per-agent) contains only exact model refs that
+match the `agents.defaults.models` keys, an interactive `openclaw doctor` shows
+the current list and a provider-wildcard replacement, then asks whether to
+allow all models from those providers. For example, `openai/gpt-6-luna` becomes
+`openai/*` and `clawrouter/anthropic/claude-opus-5-5` becomes
+`clawrouter/anthropic/*`. The default answer is no, and Doctor asks again on the
+next interactive run. The wildcards cover only providers already in the list; a new
+provider's models are allowed through its credential setup.
+
+Doctor never changes the list without that answer: `--yes`,
+`--non-interactive`, runs without a terminal, and `openclaw update` leave it
+unchanged. A list that differs from the model map, or that already has a
+wildcard, is treated as handcrafted and is not offered. Per-model settings in
+`agents.defaults.models` stay as they are.
+
 ## Collaborative steering default
 
 Collaborative steering is enabled by default. Doctor and initial configuration
@@ -1338,6 +1360,7 @@ against the current SQLite owners before the import can rename profiles.
     | Runtime and channel tuning knobs retired in 2026.7                                               | removed (built-in production defaults apply)                               |
     | `diagnostics.memoryPressureSnapshot`, legacy `diagnostics.memoryPressureBundle`                  | removed (automatic critical-memory snapshots were retired; no replacement automatic capture) |
     | `skills.workshop.autonomous.enabled`, `skills.workshop.approvalPolicy`, `skills.workshop.maxPending` | `autonomous.mode` (`true` → `"propose"`, `false` → `"off"`); proposal queue settings removed |
+    | `skills.workshop` (`autonomous.mode`, `autonomous.channelNotices`, `maxSkillBytes`)                 | `plugins.entries.skill-workshop.config`; existing plugin settings win |
 
     Doctor renames `gateway.controlUi.experimental.claws` to `templates`, preserving the boolean. If both keys exist, `templates` wins and `claws` is removed. Candidate update admission previews this repair without changing the config; the update-time Doctor pass persists it with the normal backup. External deployments that only run `openclaw config validate` must run the candidate's `openclaw doctor --fix` through their maintenance workflow before validation.
 
