@@ -224,7 +224,8 @@ Its failed CI remains failed; no current-head CI success is claimed. PR189510 re
   before/after on one Blacksmith Testbox (37→36 cases). Ten fewer test lines;
   production unchanged. Format, lint, types and both unused-file scans pass.
   Every dependency/export phase ran; unchanged Gateway, UI and changelog export
-  findings remain. Exact-head CI and landing are pending.
+  findings remain. Exact-head CI and security passed;
+  [194931](https://github.com/openclaw/openclaw/pull/194931) merged as `9a848bb13bfb`.
 
 - OC Path, pinned main `a606a90b4bf5`: remove one malformed-line append replay
   and two newline counts implied by exact output equality. The unchanged JSONL
@@ -234,6 +235,14 @@ Its failed CI remains failed; no current-head CI success is claimed. PR189510 re
   types and both unused-file scans pass. All dependency/export phases ran; the
   unchanged UI export findings remain. Exact-head CI and security passed;
   [194908](https://github.com/openclaw/openclaw/pull/194908) merged as `1a505759c0fe`.
+
+Cua, pinned main `058133da525b`: remove the scalar scroll-enum type assertion
+from the text/key dispatch case. The installed-SDK enum parity test, both
+platform scroll mappings and the SDK forwarding case remain unchanged. Both
+focused suites pass before/after (59→59 cases), with one fewer test line and no
+production changes. Format, typed lint, extension types and both unused-file
+scans pass. Both dependency phases and all three export phases ran with unchanged
+Gateway, UI and release-tool findings. Exact-head CI and landing remain pending.
 
 Batch115, pinned main `230f05c7ca37`, repairs the read-coalescing recorder
 on the actual socket returned by the mock constructor. The unchanged browser
@@ -260,6 +269,25 @@ unchanged real-OTLP start/stop/restart suite. Both suites pass before and after
 extension types and both unused-file scans pass. Both dependency phases and all
 three export phases completed with unchanged Gateway, UI and release-tool
 export findings. Exact-head CI and landing remain pending.
+
+Core tool-result classification, pinned main `9b8aa392679f`: consolidate three
+duplicate cases into the existing table that checks both classification APIs.
+Carry all six distinct completed/failure/exit inputs into that table; preserve
+every existing row and network-error, authenticated-error and hostile-reflection
+case. The unchanged baseline passed all 28 cases in
+[CI job 128652430604](https://github.com/openclaw/openclaw/actions/runs/42455052153/job/128652430604)
+at `f4976c968539`; the owner, test, dependency and harness inputs match the pinned
+base. The containing workflow failed elsewhere. The candidate has 31 expanded
+cases, 11 rather than 14 declarations, and 20 fewer test lines; production is
+unchanged. At `32cb09b3f0ee`, all 31 cases passed on both Node and Bun in
+[CI job 128671390378](https://github.com/openclaw/openclaw/actions/runs/42461299705/job/128671390378);
+its separate broker-child exit-code assertion failed. Core types and lint passed.
+All seven removal-scan phases completed in
+[CI job 128671385713](https://github.com/openclaw/openclaw/actions/runs/42461299705/job/128671385713).
+Both unused-file scans were clean; export scans found only the unchanged UI
+`EventLoadProgress` export, removed by incoming main during conflict integration.
+The integration preserved the classification test and both production owners.
+PR: [195114](https://github.com/openclaw/openclaw/pull/195114).
 
 Batches113–118, pinned main `a07facd84480`, used one native checkout and
 separate scoped proofs. Unchanged baselines passed: destinations6, History1,
@@ -376,10 +404,34 @@ permission to delete without root qualification.
 
 - Exact root/scripts records cover129 accepted paths (reconciled from the earlier117), including: the seven earlier retention/APNs/appcast/architecture/Buzz/descendant/channel-read records, the ClawRouter managed-Gateway fixture, all ten `cli-json-stdout` entry suites, CLI message authority, SQLite maintenance, provider-stall cancellation and Codex account usage, managed proxy and node cancellation. The latter four retain1/1,1/2,1/3 and1/1 physical/expanded cases respectively. All are source-only records and add no aggregate credit: overlap with older root/docs/scripts summaries is unresolved. The gross test/scripts inventory remains1,606 candidate paths, not certified unread paths.
 
+### Current-source script follow-up
+
+At `e08aa74ea39e35d01ba8e8f84e317747aba1bf3f`, eight suites added after the frozen
+census were reviewed with their owners, relevant callers, support and history.
+All 23 declarations / 36 expanded cases are retained. These are standalone
+counts, not additions to the overlapping root/scripts aggregate. This is source
+review only: no runtime qualification, test removal or production change.
+
+| Suite under `test/scripts/`           | Declarations / cases | Retained contract                                                                                                             |
+| ------------------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `generated-output-utils.test.ts`      | 5 / 12               | Exact write/check results, empty output, one-read cost, metadata/mode preservation and real blocked-parent errors.            |
+| `package-root-modules.test.ts`        | 3 / 3                | Independent parser oracle, packaged sibling imports and transitive closure with a missing-file diagnostic.                    |
+| `perf-gc-collections.test.ts`         | 1 / 1                | Inclusive start/exclusive end, append behavior across observer batches and the next measurement window.                       |
+| `setup-node-env-git.test.ts`          | 5 / 7                | Actual setup shell, privilege selection, bounded installation, capability recheck and failure propagation.                    |
+| `shared-fixture-isolation.test.ts`    | 2 / 3                | Real enclosing Git repositories, ignored archive discovery and an authoritative empty root index.                             |
+| `stylelint-selector-indexing.test.ts` | 5 / 5                | Selector semantics and normalized allowances scoped by identity, file, context and occurrence count; stale-allowance removal. |
+| `vitest-declared-inputs.test.ts`      | 1 / 2                | Real dependency recording and selected-versus-full failure oracles for archive and manifest inputs.                           |
+| `vitest-worker-run.test.ts`           | 1 / 3                | Borrowers settle after close, listeners detach and disposal preserves failures, including rejection before readiness.         |
+
+The package parser oracle cannot replace manifest membership or missing-file
+proof. Mocked inventory and UI coordinator tests cannot replace the real nested
+Git and worker-owner boundaries. No safe consolidation was identified.
+
 ## Pending qualification and proof repairs
 
-- Keep source-only candidates separate from applied removals. Obsolete fixture candidates require current-owner and runtime qualification. Pending: Cua enum and Twitch settled flag. Each needs current-source and runtime keeper qualification.
-- Transfer rows before consolidating core failed-tool classification, CodeMode deadline duplication, Android loading/blank-auth, persisted outbox keys/epochs, terminal initial projection, and native PCM/decoder/reader cases. Keep typed host-error precedence and active-run settlement.
+- Keep source-only candidates separate from applied removals. Obsolete fixture candidates require current-owner and runtime qualification. Pending: Twitch settled flag; it needs current-source and runtime keeper qualification.
+- Transfer rows before consolidating Android loading/blank-auth, persisted outbox keys/epochs, terminal initial projection, and native PCM/decoder/reader cases. Keep typed host-error precedence and active-run settlement.
+- Retain the CodeMode worker-leg deadline case: its real warmed worker and interruption path are distinct from the cancellation table's typed host-error precedence. Both suites keep their active-run settlement checks; this is a source-only retention decision.
 - Repair Android runtime/model fixture custody through existing guaranteed closers; no measured leak is claimed. Retarget misleading coroutine/authority/streaming assertions. Qualify Android dropdown arithmetic, IPv6 URL, empty SMS defaults and component-state mapping against their stronger keepers.
 - Repair swallowed/unrelated setup errors, silent auth/symlink skips, SSRF negative controls, content-absence/privacy results, delayed observer proofs, missing CLI fixture cleanup and aggregate-only tool-result fidelity. Retain CI inventory gaps as route repairs, including PostgreSQL conformance and removed Logbook worker paths.
 - Diagnostics OTel: the NodeSDK replay removal is runtime-qualified above; content capture proof remains a separate repair.
