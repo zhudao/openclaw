@@ -3,6 +3,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { Page } from "./page-context.js";
 import { defaultOptions, repairPrompt, scribeSetup, setupPrompt } from "./scribes-catalog.js";
+import type { ScribeJob } from "./scribes-state.js";
 import { scribes } from "./scribes-view.js";
 
 type Call = [string, Record<string, unknown> | undefined];
@@ -348,7 +349,10 @@ it("restarts a turned-off scribe in its existing conversation with a fresh attem
   });
   const view = await render();
   buttonNamed(view, "Set up…").click();
-  buttonNamed(page.querySelector("dialog")!, "Start").click();
+  const dialog = page.querySelector("dialog")!;
+  expect(dialog.textContent).toContain("creating it if needed");
+  expect(dialog.textContent).toContain("This request uses the conversation’s model settings.");
+  buttonNamed(dialog, "Start").click();
   await vi.waitFor(() => expect(calls.some(([method]) => method === "chat.send")).toBe(true));
   expect(create).not.toHaveBeenCalled();
   const send = calls.find(([method]) => method === "chat.send")![1]!;
@@ -453,6 +457,7 @@ it.each([false, true])(
     buttonNamed(view, "Run now").click();
     await flush();
     expect(calls.at(-1)).toEqual(["cron.run", { id: "job-review", mode: "force" }]);
+    expect(ui.announce).toHaveBeenCalledWith("Run requested for Knowledge Consolidation.");
     const disable = buttonNamed(view, running ? "Stop and disable" : "Disable");
     expect(disable).toBeDefined();
     disable.click();
@@ -851,7 +856,7 @@ it("forces an ongoing scribe's first run once after its setup turn reports on", 
     { scope: "active", since: "30d", schedule: "0 4 * * *" },
     "America/Los_Angeles",
   );
-  const job = {
+  const job: ScribeJob = {
     id: "job-first",
     declarationKey: "knowledge:scribe:conversations",
     enabled: true,
@@ -871,8 +876,16 @@ it("forces an ongoing scribe's first run once after its setup turn reports on", 
   const view = await render();
   const forced = () => calls.filter(([method]) => method === "cron.run");
   expect(forced()).toEqual([["cron.run", { id: "job-first", mode: "force" }]]);
-  expect(view.querySelector(".scribe-run")?.textContent).toContain("First runRunning now");
-  await render();
+  expect.soft(view.querySelector(".scribe-run")?.textContent).toContain("First runRun requested");
+  expect.soft(ui.announce).toHaveBeenCalledWith("Learn from conversations: first run requested.");
+  ui.s.scribe = "";
+  expect.soft((await render()).textContent).toContain("First run requested");
+  job.state.runningAtMs = 1_793_080_000_000;
+  expect((await render()).textContent).toContain("First run in progress");
+  ui.s.scribe = "conversations";
+  expect((await render()).querySelector(".scribe-run")?.textContent).toContain(
+    "First runRunning now",
+  );
   expect(forced()).toHaveLength(1);
 });
 
@@ -912,7 +925,7 @@ it("tries the first run again on the next load when forcing it failed", async ()
   const later = await render();
   const force = ["cron.run", { id: "job-retry-first", mode: "force" }];
   expect(calls.filter(([method]) => method === "cron.run")).toEqual([force, force, force]);
-  expect(later.querySelector(".scribe-run")?.textContent).toContain("First runRunning now");
+  expect(later.querySelector(".scribe-run")?.textContent).toContain("First runRun requested");
 });
 
 it("does not force a run after a repair, or for a job that already ran", async () => {
@@ -1017,6 +1030,28 @@ it("shows a Run now the scheduler refused instead of reporting it running", asyn
       "the automation lost its owner",
     ),
   );
-  expect(ui.announce).not.toHaveBeenCalledWith("Knowledge Consolidation is running.");
+  expect(ui.announce).not.toHaveBeenCalledWith("Run requested for Knowledge Consolidation.");
   expect(load).not.toHaveBeenCalled();
+});
+
+it("keeps failed run-history reads distinct from an empty history and recovers on reopen", async () => {
+  const { render, ui, request, calls } = fixture({ sessions: reviewSession, jobs: [reviewJob] });
+  ui.s.scribe = "claim-consolidation";
+  const original = request.getMockImplementation()!;
+  request.mockImplementation(async (method, params) => {
+    if (method === "cron.runs") {
+      throw new Error("History unavailable");
+    }
+    return original(method, params);
+  });
+  const failed = await render();
+  expect(failed.querySelector(".scribe-history")?.textContent).toContain(
+    "Could not load recent runs.",
+  );
+  expect(failed.querySelector(".scribe-history")?.textContent).not.toContain("No runs yet.");
+  request.mockImplementation(original);
+  expect((await render()).querySelector(".scribe-history")?.textContent).toContain(
+    "9 filed · 2 pages created",
+  );
+  expect(calls.some(([method]) => method === "cron.run")).toBe(false);
 });
