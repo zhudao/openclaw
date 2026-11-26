@@ -96,6 +96,7 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/github-publication-inspect.test.ts",
   "src/gateway/github-publication-legacy-options.test.ts",
   "src/gateway/github-publication-native.test.ts",
+  "src/gateway/github-publication-participation.test.ts",
   "src/gateway/github-publication-personal-pending.test.ts",
   "src/gateway/github-publication-private-session.test.ts",
   "src/gateway/github-publication-reconciliation.test.ts",
@@ -171,6 +172,7 @@ export const gatewayDatabaseWorkerTestFiles = [
   "src/gateway/openclaw-id/service.role-presets.test.ts",
   "src/gateway/openresponses-session-store.test.ts",
   "src/gateway/operator-approval-mcp-grants.test.ts",
+  "src/gateway/operator-approval-participation-replay.test.ts",
   "src/gateway/operator-approval-placement-grants.test.ts",
   "src/gateway/operator-approval-receipts.test.ts",
   "src/gateway/operator-approval-runtime-token.test.ts",
@@ -659,7 +661,6 @@ export const gatewayMethodsIsolatedTestFiles = [
   // Heap scans should not traverse objects from unrelated test files.
   "src/gateway/server-methods/chat-metadata-runtime.cache.test.ts",
   "src/gateway/server-methods/agent.test.ts",
-  "src/gateway/server-methods/agent.followup-owner.test.ts",
   "src/gateway/server-methods/agent.visitor-access.test.ts",
   "src/gateway/server-methods/board.runtime-boundaries.test.ts",
   "src/gateway/server-methods/chat.reset-visible-yield.test.ts",
